@@ -1,0 +1,25 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 랭킹: boards/{코스키|랩}/records/{uid}  — 로그인(익명 포함)한 사용자만 읽기,
+    // 본인 문서만 쓰기, 기록은 더 빨라지는 방향(또는 동일)으로만 갱신, 값 범위 검증.
+    match /boards/{board}/records/{uid} {
+      function valid() {
+        let d = request.resource.data;
+        return d.keys().hasOnly(['name', 'time', 'best', 'motor', 'tire', 'at'])
+          && d.name is string && d.name.size() > 0 && d.name.size() <= 20
+          && d.time is number && d.time > 1 && d.time < 3600
+          && d.best is number && d.best > 0.5 && d.best <= d.time
+          && d.motor is string && d.motor.size() <= 20
+          && d.tire is string && d.tire.size() <= 20
+          && d.at is number;
+      }
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.auth.uid == uid && valid();
+      allow update: if request.auth != null && request.auth.uid == uid && valid()
+        && request.resource.data.time <= resource.data.time;
+      allow delete: if false;
+    }
+  }
+}
