@@ -62,7 +62,20 @@ function resize() {
   const k = camera.aspect < 1 ? Math.min(2, 1 + (1 - camera.aspect) * 0.95) : 1;      // 세로 화면은 카메라가 멀어지므로 안개 거리도 같이 늘린다
   scene.fog.near = 260 * k; scene.fog.far = 1000 * k;
 }
-addEventListener('resize', resize); resize();
+addEventListener('resize', () => { resize(); syncView(); }); resize();
+/** 모바일 편집: 하단 편집 바가 가린 만큼 화면 중심을 위로 옮겨, 트랙이 보이는 영역의 한가운데에 오게 한다 */
+function syncView() {
+  const w = innerWidth, h = innerHeight;
+  let occ = 0;
+  const ed = document.getElementById('editor');
+  if (mode === 'build' && V.screen === 'room' && ed && !ed.classList.contains('hide') && matchMedia('(max-width:820px), (max-height:560px)').matches) {
+    let top = h;
+    for (const id of ['mobBottom', 'left', 'right']) { const el = document.getElementById(id); if (el && getComputedStyle(el).display !== 'none') top = Math.min(top, el.getBoundingClientRect().top); }
+    occ = Math.max(0, Math.min(h - top, h * 0.6));
+  }
+  if (occ > 0) camera.setViewOffset(w, h, 0, Math.round(occ / 2), w, h); else camera.clearViewOffset();
+  camera.updateProjectionMatrix();
+}
 
 /* ====================================================================
  *  텍스처 / 재질
@@ -538,7 +551,12 @@ function updateToolUI() {
   $('tSelect').classList.toggle('on', E.tool === 'select' && !E.armed); $('tDelete').classList.toggle('on', E.tool === 'delete');
   [...$('pal').children].forEach(b => b.classList.toggle('on', b.dataset.type === palType(E.armed)));
   const sel = selected();
-  $('modeInfo').textContent = E.armed ? `배치 중: ${PIECES[E.armed].label} — 클릭으로 놓기 · Z/X 회전 · F 반전 · Esc 취소`
+  const mob = matchMedia('(max-width:820px), (max-height:560px)').matches;
+  $('modeInfo').textContent = mob
+    ? (E.armed ? `배치 중: ${PIECES[E.armed].label} — 놓을 곳을 탭 · 회전/반전 버튼`
+      : E.tool === 'delete' ? '지울 부품을 탭하세요'
+      : sel ? `선택됨: ${PIECES[sel.type].label} — 드래그로 이동 · 아래 버튼으로 회전/반전/삭제` : '')
+    : E.armed ? `배치 중: ${PIECES[E.armed].label} — 클릭으로 놓기 · Z/X 회전 · F 반전 · Esc 취소`
     : E.tool === 'delete' ? '삭제 도구: 지울 부품을 클릭하세요'
     : sel ? `선택됨: ${PIECES[sel.type].label} — 드래그 이동 · Z/X 회전 · F 반전 · Del 삭제` : '';
   canvas.style.cursor = E.armed ? 'crosshair' : E.tool === 'delete' ? 'not-allowed' : 'default';
@@ -879,7 +897,7 @@ function startRace(opts) {
   roster.forEach((r, i) => { const c = makeCar({ motor: r.motor, tire: r.tire }, LANES[r.lane], r.name, i); c.speedMul = r.speedMul; c.s = 0; c.laps = 0; cars.push(c); vis.push(new CarVis(STYLES[i])); });     // 출발선에서 시작 (GO 와 함께 초기 속도를 받는다)
   mode = 'countdown'; countT = (opts && opts.countT0) || 0; raceT = 0; simAcc = 0; lastCount = 4; finishAt = 0; resultShown = false; selCar = 0;
   $('editor').classList.add('hide'); $('home').classList.add('hide'); $('race').classList.remove('hide'); $('camMenu').classList.add('hide'); $('result').classList.add('hide'); $('toast').classList.add('hide');
-  $('msg').textContent = ''; $('center').textContent = '';
+  $('msg').textContent = ''; $('center').textContent = ''; syncView();
   controls.enabled = false; controls.autoRotate = false; camMode = 0; resetLook(); controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE; controls.touches.ONE = THREE.TOUCH.ROTATE;
   root.position.set(0, 0, 0); root.rotation.y = 0;               // 레이스는 트랙 좌표계 그대로
   layoutGroup.visible = false; markerGroup.visible = false; selMesh.visible = false; ghostRoot.visible = ghostHi.visible = false;
@@ -1069,7 +1087,34 @@ function showResult() {
   $('resTable').innerHTML = '<tr><th>순위</th><th>차</th><th>기록</th><th>베스트 랩</th><th>코스아웃</th></tr>' + rk.map((c, i) =>
     `<tr><td>${i + 1}</td><td style="color:${hexs(STYLES[c.colorIdx].main)};font-weight:800">${c.name}</td><td>${c.finished ? fmt(c.finishTime) : '주행 중'}</td><td>${fmt(c.bestLap)}</td><td>${c.crashes}</td></tr>`).join('');
   $('result').classList.remove('hide');
+  startConfetti();
   submitMyRecord();
+}
+/* 우승 팝업: 색종이가 위에서 떨어지는 효과 (팝업이 닫히면 멈춘다) */
+let confettiRaf = 0;
+function startConfetti() {
+  const cv = $('confetti'), g = cv.getContext('2d'), dpr = Math.min(2, devicePixelRatio || 1);
+  cv.width = Math.round(innerWidth * dpr); cv.height = Math.round(innerHeight * dpr);
+  const W = cv.width, H = cv.height, COLORS = ['#ffd23f', '#ff5d5d', '#4da0ff', '#6dffa8', '#ff9ad5', '#ffffff', '#ff9f43'];
+  const N = innerWidth < 600 ? 90 : 160, rnd = (a, b) => a + Math.random() * (b - a);
+  const mk = (initial) => ({ x: rnd(0, W), y: initial ? rnd(-H, 0) : rnd(-60, -10) * dpr, w: rnd(6, 12) * dpr, h: rnd(10, 18) * dpr, vy: rnd(120, 260) * dpr, vx: rnd(-40, 40) * dpr,
+    rot: rnd(0, 6.28), vr: rnd(-6, 6), ph: rnd(0, 6.28), sw: rnd(0.8, 2), c: COLORS[(Math.random() * COLORS.length) | 0] });
+  const ps = Array.from({ length: N }, () => mk(true));
+  cancelAnimationFrame(confettiRaf);
+  let last = performance.now();
+  const tick = now => {
+    if ($('result').classList.contains('hide')) { g.clearRect(0, 0, W, H); return; }
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    g.clearRect(0, 0, W, H);
+    for (let i = 0; i < ps.length; i++) {
+      let p = ps[i];
+      p.y += p.vy * dt; p.ph += p.sw * dt * 3; p.x += (p.vx + Math.sin(p.ph) * 40 * dpr) * dt; p.rot += p.vr * dt;
+      if (p.y > H + 30 * dpr) p = ps[i] = mk(false);
+      g.save(); g.translate(p.x, p.y); g.rotate(p.rot); g.scale(1, Math.cos(p.ph * 1.7)); g.fillStyle = p.c; g.fillRect(-p.w / 2, -p.h / 2, p.w, p.h); g.restore();
+    }
+    confettiRaf = requestAnimationFrame(tick);
+  };
+  confettiRaf = requestAnimationFrame(tick);
 }
 
 /* ====================================================================
@@ -1146,6 +1191,31 @@ async function submitMyRecord() {
 }
 $('resRankBtn').onclick = () => showRanking();
 
+/* ---- 배경음악: 접속하면 바로 재생 (브라우저가 막으면 첫 터치/키 입력에서 시작), 버튼으로 끄고 켜기 ---- */
+const bgm = new Audio('assets/sounds/bgm.mp3'); bgm.loop = true; bgm.volume = 0.35; bgm.preload = 'auto';
+let bgmOn = store.get('mini4wd.bgm', true) !== false, bgmWait = false;
+function bgmUI() { const b = $('bgmBtn'); b.textContent = bgmOn ? '🔊' : '🔇'; b.title = bgmOn ? '배경음악 끄기' : '배경음악 켜기'; b.classList.toggle('off', !bgmOn); }
+function bgmPlay() {
+  if (!bgmOn || document.hidden) return;
+  bgm.play().catch(() => {
+    if (matchMedia('(max-width:820px), (max-height:560px)').matches) return;     // 모바일: 방 만들기 / 참여하기 버튼을 누를 때 시작
+    if (bgmWait) return; bgmWait = true;                    // PC: 자동 재생이 막히면 처음 누르는 순간 시작
+    const go = () => { bgmWait = false; removeEventListener('pointerdown', go, true); removeEventListener('keydown', go, true); bgmPlay(); };
+    addEventListener('pointerdown', go, true); addEventListener('keydown', go, true);
+  });
+}
+$('bgmBtn').onclick = () => { bgmOn = !bgmOn; store.set('mini4wd.bgm', bgmOn); if (bgmOn) bgmPlay(); else bgm.pause(); bgmUI(); };
+document.addEventListener('visibilitychange', () => { if (document.hidden) bgm.pause(); else bgmPlay(); });
+/* PC 경기 화면: 소리 버튼을 오른쪽 위 '카메라 변경' 왼쪽으로 옮긴다 (그 밖의 화면/모바일은 원래 자리) */
+function placeBgm() {
+  const b = $('bgmBtn'), rb = $('rbtns'), inRace = !$('race').classList.contains('hide') && !matchMedia('(max-width:820px), (max-height:560px)').matches;
+  if (inRace && b.parentNode !== rb) rb.insertBefore(b, rb.firstChild);
+  else if (!inRace && b.parentNode !== document.body) document.body.appendChild(b);
+}
+new MutationObserver(placeBgm).observe($('race'), { attributes: true, attributeFilter: ['class'] });
+matchMedia('(max-width:820px), (max-height:560px)').addEventListener('change', placeBgm);
+bgmUI(); bgmPlay();
+
 /* ---- 화면 전환 ---- */
 let roomUnsub = null, listUnsub = null, lastStartAt = 0, savedPieces = null, roomSnap = null, lastSyncKey = undefined;
 /* ---- 모바일: 좌/우 패널을 아래 시트로 바꾸고 탭으로 전환 (데스크톱에서는 CSS 가 무시) ---- */
@@ -1153,7 +1223,9 @@ let mobTab = 'left';
 function setMobTab(tab) {
   mobTab = tab; $('editor').dataset.tab = tab;           // 'left' | 'right' | 'none'(둘 다 닫음)
   $('mtLeft').classList.toggle('on', tab === 'left'); $('mtRight').classList.toggle('on', tab === 'right');
+  syncView();
 }
+$('presetsTitle').onclick = () => { $('left').classList.toggle('showPresets'); syncView(); };
 $('mtLeft').onclick = () => setMobTab(mobTab === 'left' ? 'none' : 'left');          // 같은 탭을 다시 누르면 닫힘
 $('mtRight').onclick = () => setMobTab(mobTab === 'right' ? 'none' : 'right');
 $('xLeft').onclick = $('xRight').onclick = () => setMobTab('none');
@@ -1166,7 +1238,8 @@ const mqMobile = matchMedia('(max-width:820px), (max-height:560px)');
     else { right.insertBefore(plist, plNext); right.insertBefore(startBox, sbNext); leaveRow.appendChild(leaveBtn); leaveRow.classList.remove('hide'); }
   };
   relayout(); mqMobile.addEventListener('change', relayout);
-  new ResizeObserver(es => { for (const e of es) document.documentElement.style.setProperty('--mbh', Math.ceil(e.contentRect.height) + 'px'); }).observe($('mobBottom'));
+  new ResizeObserver(es => { for (const e of es) document.documentElement.style.setProperty('--mbh', Math.ceil(e.contentRect.height) + 'px'); syncView(); }).observe($('mobBottom'));
+  new ResizeObserver(() => syncView()).observe($('left'));
 }
 function applyScreen() {
   const home = V.screen === 'home', host = V.role === 'host';
@@ -1207,9 +1280,11 @@ function renderRoomList(rows) {
       <div class="row" style="margin:0;flex-wrap:nowrap">${watchBtn}${joinBtn}</div></div>`;
   }).join('') : '<div class="hint empty" style="padding:10px 0">열려 있는 방이 없어요. 방을 만들어 보세요!</div>';
   $('roomList').querySelectorAll('[data-watch]').forEach(b => b.onclick = async () => {
+    bgmPlay();
     try { enterRoom(await backend.spectateRoom(b.dataset.watch), 'spectator'); } catch (e) { toast(e.message); }
   });
   $('roomList').querySelectorAll('[data-code]').forEach(b => b.onclick = async () => {
+    bgmPlay();
     try { enterRoom(await backend.joinRoom(b.dataset.code, { motor: mySetup.motor, tire: mySetup.tire }), 'guest'); } catch (e) { toast(e.message); }
   });
 }
@@ -1232,7 +1307,7 @@ function showCreateRoom() {
   $('rtOk').onclick = go; $('rtCancel').onclick = closeModal;
   input.addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
 }
-$('makeRoom').onclick = showCreateRoom;
+$('makeRoom').onclick = () => { bgmPlay(); showCreateRoom(); };
 
 /* ---- 방 ---- */
 function enterRoom(s, role) {

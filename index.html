@@ -181,6 +181,11 @@
   #roomList .hint.empty { font-size:15px; }
   .row.top { margin:0 0 8px; align-items:center; }
   #nick { width:120px; }
+  /* 배경음악 켜기/끄기: 홈·경기 화면은 왼쪽 아래, 방 화면은 오른쪽 아래 */
+  #bgmBtn { position:fixed; left:12px; bottom:12px; z-index:6; width:42px; height:42px; padding:0; margin:0; border-radius:50%; font-size:19px; line-height:1; display:flex; align-items:center; justify-content:center; }
+  #bgmBtn.off { filter:grayscale(.8) brightness(.85); }
+  #editor:not(.hide) ~ #bgmBtn { left:auto; right:16px; bottom:16px; }
+  #rbtns #bgmBtn { position:static; width:auto; height:auto; padding:7px 12px; border-radius:10px; font-size:14px; }
   #loading { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:#06102a; font-size:22px; z-index:9; }
 
   /* ================= 모바일 (폭 820px 이하 / 가로 모드 폰) ================= */
@@ -216,7 +221,8 @@
     #mobStart #startBtn { flex:1; width:auto; margin:0; padding:8px 10px; font-size:19px; letter-spacing:0; }
     #mobStart .ico { width:22px; height:22px; margin-right:6px; font-size:9px; border-width:2px; }
     #mobStart #startChoice { flex-basis:100%; background:rgba(10,18,44,.92); border:1px solid var(--line); border-radius:12px; padding:8px 10px; }
-    #mobStart #startChoice .row { gap:6px; flex-wrap:nowrap; } #mobStart #startChoice .hint { margin:0 0 6px; font-size:11px; }
+    #mobStart #startChoice .row { gap:6px; flex-wrap:nowrap; width:100%; } #mobStart #startChoice .hint { margin:0 0 6px; font-size:11px; }
+    #mobStart #startChoice .row .btn { flex:1 1 0; min-width:0; margin:0; padding-left:4px; padding-right:4px; white-space:nowrap; text-align:center; }
     /* 참여 인원: 오른쪽 위에 작게 고정 */
     #mobPlist { display:block; position:fixed; top:calc(8px + env(safe-area-inset-top)); right:8px; width:172px; z-index:3; pointer-events:none; }
     #mobPlist #plist { margin:0; padding:4px 6px 5px; border-width:2px; border-radius:10px; font-size:12px; box-shadow:0 2px 0 rgba(0,0,0,.25); }
@@ -226,6 +232,8 @@
     #mobPlist .pl-name { font-size:12px; line-height:1.2; } #mobPlist .pl-me { margin-left:4px; padding:0 5px; font-size:10px; }
     #mobPlist .pl-sub { font-size:12px; margin-top:0; line-height:1.2; }
     #mobPlist .pl-empty { margin:3px 0; padding:3px; border-width:1px; font-size:12px; }
+    #editor:not(.hide) ~ #bgmBtn { left:8px; right:auto; bottom:auto; top:calc(50px + env(safe-area-inset-top)); width:36px; height:36px; font-size:16px; }
+    #bgmBtn { left:8px; bottom:calc(10px + env(safe-area-inset-bottom)); }
     #mtabs .mtab { flex:1; margin:0; padding:10px 6px; font-size:13px; border-radius:12px; position:relative; }
     .mtab .dot { display:none; position:absolute; right:9px; top:7px; width:9px; height:9px; border-radius:50%; background:#6dffa8; box-shadow:0 0 0 2px rgba(0,0,0,.4); }
     .mtab.ready .dot { display:block; }
@@ -251,6 +259,23 @@
     .presets { gap:7px 5px; } .btn.preset { font-size:11.5px; padding:9px 0; }
     .modeinfo { font-size:11px; margin-top:0; min-height:12px; }
     #left .toolsTitle { margin-top:0 !important; }
+    /* 코스 편집: 시트 대신 얇은 하단 편집 바 (부품 한 줄 + 도구 한 줄) → 트랙이 더 넓게 보인다 */
+    #left { max-height:none; overflow:visible; padding:6px 8px 3px; background:rgba(10,18,44,.74); border-radius:14px; }
+    #left > h2:first-of-type, #left .toolsTitle, #left #xLeft { display:none !important; }
+    #left .pal { gap:4px; }
+    #left .pbtn { padding:3px 0 2px; margin-bottom:3px; font-size:9.5px; }
+    #left .pbtn svg { height:22px; }
+    #left .modeinfo { min-height:0; margin:0 0 3px; line-height:1.3; text-align:center; }
+    #left .modeinfo:empty { display:none; }
+    .tools { grid-template-columns:repeat(10,1fr); gap:3px; margin:0 0 2px; }
+    .tools .btn { flex-direction:column; gap:1px; padding:4px 0 3px; font-size:9.5px; letter-spacing:-0.5px; border-radius:8px; margin-bottom:3px; }
+    .tools .btn .ti { width:17px; height:17px; }
+    /* 추천 코스는 접어 두고, 누르면 펼쳐서 고른다 */
+    #presetsTitle { margin:2px 0 4px !important; padding:3px 0; font-size:12px; text-align:center; cursor:pointer; border-top:1px solid var(--line); }
+    #presetsTitle::after { content:" ▴"; }
+    #left:not(.showPresets) #presetsTitle::after { content:" ▾"; }
+    #left:not(.showPresets) .presets { display:none; }
+    #left.showPresets { max-height:46dvh; overflow:auto; }
     #plist { margin:4px 0 8px; } .pl-row { padding:5px 4px; } .pl-name { font-size:14px; }
     .car { padding:7px; } button.go { font-size:19px; padding:10px; }
     #statusPop { min-width:220px; top:28%; padding:14px 18px 12px; } #statusPop .pt { font-size:19px; } #statusPop .ps { font-size:12px; }
@@ -274,7 +299,7 @@
     #modal .card { padding:14px 14px; max-height:90dvh; width:94vw; } #modal h1 { font-size:22px; }
     #modalClose { right:10px; top:10px; }
   }
-  @media (max-width:380px) { .stk.big { font-size:28px; } .tools .btn { font-size:10.5px; } #stand { width:min(200px,56vw); } }
+  @media (max-width:380px) { .stk.big { font-size:28px; } .tools .btn { font-size:9px; } #stand { width:min(200px,56vw); } }
 </style>
 </head>
 <body>
@@ -324,7 +349,7 @@
       <button class="btn" id="clear" title="전체 지우기"><svg class="ti" viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="10" rx="2"/><path d="M5.7 5.7l4.6 4.6M10.3 5.7l-4.6 4.6"/></svg>비우기</button>
       <button class="btn" id="fit" title="화면 맞춤 (A)"><svg class="ti" viewBox="0 0 16 16"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/></svg>맞춤</button>
     </div>
-    <h2 style="margin-top:14px">추천 코스</h2>
+    <h2 style="margin-top:14px" id="presetsTitle">추천 코스</h2>
     <div class="presets" id="presets"></div>
   </div>
 
@@ -339,7 +364,7 @@
       <button class="btn red go" id="startBtn"><span class="ico">▶</span>시작</button>
       <div id="startChoice" class="hide">
         <div class="hint" style="margin:6px 0">아직 참여자가 없어요. 어떻게 시작할까요?</div>
-        <div class="row" style="margin:0"><button class="btn go2" id="soloBtn">🚗 혼자하기</button><button class="btn go2 blue" id="aiBtn">🤖 AI와 하기</button><button class="btn" id="choiceCancel">취소</button></div>
+        <div class="row" style="margin:0"><button class="btn go2" id="soloBtn">혼자하기</button><button class="btn go2 blue" id="aiBtn">AI와 하기</button><button class="btn" id="choiceCancel">취소</button></div>
       </div>
     </div>
     <div class="hint hide" id="waitMsg" style="font-size:13px;margin-top:10px"></div>
@@ -357,8 +382,11 @@
   <div class="hud" id="help"><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> 따라갈 차 선택 (1=나) &nbsp; <kbd>C</kbd> 카메라 전환 <kbd>V</kbd> 항공뷰 &nbsp; <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd>/드래그 시점 회전 &nbsp; 휠·<kbd>+</kbd><kbd>-</kbd> 확대 &nbsp; <kbd>0</kbd> 시점 초기화 &nbsp; <kbd>E</kbd> 경기종료 &nbsp; <kbd>M</kbd> 소리</div>
 </div>
 
+<button class="btn" id="bgmBtn" aria-label="배경음악 켜기/끄기">🔊</button>
+
 <div class="overlay hide" id="result">
-  <div class="card">
+  <canvas id="confetti" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></canvas>
+  <div class="card" style="position:relative;z-index:1">
     <h1 id="resTitle">RESULT</h1>
     <table id="resTable"></table>
     <div id="resRank" style="margin:-6px 0 12px;font-size:15px;font-weight:700;color:#ffd36b;min-height:20px"></div>
