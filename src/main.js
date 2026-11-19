@@ -1517,7 +1517,7 @@ function renderRoomList(rows) {
     const full = r.players >= r.max, busy = r.status !== 'lobby' && !(r.fixed && !r.players);      // 고정 방이 빈 채로 '시작' 상태면 들어가면서 되돌린다
     const joinBtn = `<button class="btn go2" data-code="${r.code}" ${full || busy ? 'disabled' : ''}>${full ? '참여불가' : busy ? '진행 중' : '참여하기'}</button>`;
     const watchBtn = full ? `<button class="btn blue" data-watch="${r.code}" ${busy ? 'disabled' : ''} title="${busy ? '진행 중인 방은 관전할 수 없어요' : ''}">👀 관전하기</button>` : '';
-    return `<div class="crow ${r.fixed ? 'fixedRoom' : ''}"><div>${r.fixed ? '<span class="pinTag">📌 상시</span> ' : ''}<b>${esc(r.title || r.hostName + '의 방')}</b>${r.night ? ' <span class="nightTag">🌙 밤</span>' : ''}<br><span class="hint">${r.fixed && !r.players ? '먼저 들어온 사람이 방장' : `방장 ${esc(r.hostName)}`} · ${r.hasCourse ? `${esc(r.courseName || '커스텀 코스')} · 부품 ${r.seqLen}개` : '코스 만드는 중…'} · ${LAPS_FIXED}랩 · ${r.players}/${r.max}명</span></div>
+    return `<div class="crow"><div><b>${esc(r.title || r.hostName + '의 방')}</b>${r.night ? ' <span class="nightTag">🌙 밤</span>' : ''}<br><span class="hint">방장 ${r.fixed && !r.players ? '-' : esc(r.hostName)} · ${r.hasCourse ? `${esc(r.courseName || '커스텀 코스')} · 부품 ${r.seqLen}개` : '코스 만드는 중…'} · ${LAPS_FIXED}랩 · ${r.players}/${r.max}명</span></div>
       <div class="row" style="margin:0;flex-wrap:nowrap">${watchBtn}${joinBtn}</div></div>`;
   }).join('') : '<div class="hint empty" style="padding:10px 0">열려 있는 방이 없어요. 방을 만들어 보세요!</div>';
   $('roomList').querySelectorAll('[data-watch]').forEach(b => b.onclick = async () => {
