@@ -26,7 +26,7 @@ export const PIECES = {
 export const REVERSE = { straight: 'straight', half: 'half', c45R: 'c45L', c45L: 'c45R', c90R: 'c90L', c90L: 'c90R', b90R: 'b90L', b90L: 'b90R', up: 'down', down: 'up', brake: 'brake', lane: 'lane', wave: 'wave', jump: null };
 export const FLIP = { c45R: 'c45L', c45L: 'c45R', c90R: 'c90L', c90L: 'c90R', b90R: 'b90L', b90L: 'b90R' };
 
-export const JUMP = { rampEnd: 20, gapEnd: 34, height: 3, len: 60 };
+export const JUMP = { rampEnd: 20, gapEnd: 31, height: 3, len: 60 };
 export const WAVE = { amp: 0.7, humps: 2 };
 
 function heightAt(type, u, len, h0) {

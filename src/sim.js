@@ -5,6 +5,11 @@ import { MOTORS, TIRES, WALL_G, REST_BASE, deriveSpec } from './parts.js';
 /* 모터·타이어 표와 세팅 → 성능 계산은 parts.js (미니카 커스텀) */
 export { MOTORS, TIRES };
 
+/* 시간 배율: 트랙 1단위 = 2.7cm (직선 20 = 실제 54cm). 시뮬레이션 단위 그대로면 중력이 실제의 1/9 이라 전체가 슬로모션처럼 보인다.
+ * 시뮬레이션 시간을 실제 시간의 3배로 흘리면 중력 40×3² = 360 단위/s² ≈ 9.7m/s² (실제와 같음), 속도도 실제 미니4WD 체감에 가까워진다.
+ * 물리·밸런스(모터/롤러/점프)는 그대로이고, 화면에 보이는 기록만 실제 시간(= 시뮬레이션 시간 / TIME_SCALE)으로 바꿔 표시한다. */
+export const TIME_SCALE = 3;
+export const CRASH_TIME = 0.5;  // 코스아웃 장면은 절반 속도(슬로모션)로 재생해 날아가는 모습이 보이게 한다 (복귀까지 실제 약 1.3초)
 export const G = 40;
 const RESPAWN_T = 1.9;
 export const BOUNCE_OUT = 9;   // 착지 후 튀어 오르는 속도가 이 이상이면 벽을 넘어 코스아웃
@@ -29,17 +34,19 @@ function crashStep(car, tr, dt) {
   const c = car.c, n = tr.n;
   c.vy -= G * dt; c.x += c.vx * dt; c.y += c.vy * dt; c.z += c.vz * dt;
   if (car.vaultT > 0) car.vaultT -= dt;
+  if (car.launchT > 0) car.launchT -= dt;
   // 가장 가까운 중심선 샘플
   let bi = car.ci, bd = Infinity;
   for (let k = -6; k <= 6; k++) { const i = (car.ci + k + n * 4) % n, dx = c.x - tr.X[i], dz = c.z - tr.Z[i], d = dx * dx + dz * dz; if (d < bd) { bd = d; bi = i; } }
   car.ci = bi;
   const nx = tr.DZ[bi], nz = -tr.DX[bi], h = tr.H[bi];
   let lat = (c.x - tr.X[bi]) * nx + (c.z - tr.Z[bi]) * nz;
+  if (car.launchT > 0 && car.crashT > 0.25 && Math.abs(lat) > ROAD_HALF + WALL.T + CAR_HW) car.launchT = 0;   // 벽을 완전히 넘어서면 튀어 나가기 끝
   let vn = c.vx * nx + c.vz * nz;
   let supported = false;
   const shift = (newLat, newVn) => { c.x += nx * (newLat - lat); c.z += nz * (newLat - lat); c.vx += nx * (newVn - vn); c.vz += nz * (newVn - vn); lat = newLat; vn = newVn; };
 
-  if (!isNaN(h)) {                                   // 점프 공백(h=NaN)에는 노면·벽이 없다
+  if (!isNaN(h) && !(car.launchT > 0)) {             // 점프 공백(h=NaN)에는 노면·벽이 없다. 코스아웃으로 튀어 나가는 중(launchT)에는 칸막이·벽을 넘어간다
     for (const o of OBST) {
       if (!o.wall && tr.seq[tr.PI[bi]] === 'lane') continue;          // 레인체인지 구간에는 칸막이가 없다
       const top = h + o.top, bot = h - WALL.BODY;
@@ -77,8 +84,9 @@ function crashStep(car, tr, dt) {
     }
   }
   if (c.y <= FLOOR) { c.y = FLOOR; supported = true; if (c.vy < 0) c.vy = c.vy < -3 ? -c.vy * 0.25 : 0; }
-  if (supported) {                                    // 바닥/벽 위에서 미끄러지며 멈춘다
-    const f = Math.exp(-(car.caught ? 14 : 2.6) * dt), g = Math.exp(-4 * dt);
+  if (supported) {                                    // 바닥/벽 위에서 미끄러지며 멈춘다 (트랙 밖 잔디는 더 빨리 멈춤)
+    const grass = c.y <= FLOOR + 0.01 && Math.abs(lat) > ROAD_HALF + WALL.T;
+    const f = Math.exp(-(car.caught ? 14 : grass ? 6 : 2.6) * dt), g = Math.exp(-4 * dt);
     c.vx *= f; c.vz *= f; c.rx *= g; c.rz *= g; c.ry *= g;
   }
 }
@@ -132,9 +140,12 @@ export function launchSpeed(car, tr) {
 }
 
 /** setup: 커스텀 세팅(kit 객체/문자열) 또는 예전 { motor, tire }. 성능은 deriveSpec 이 부품 조합으로 계산한다 */
+/** 레이스마다 같은 시드 → 모든 접속자에서 같은 난수열 (코너 흔들림) */
+function seeded(seed) { let a = (seed >>> 0) || 1; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 export function makeCar(setup, lane, name, colorIdx) {
   const spec = deriveSpec((setup && setup.kit) || setup);
   return {
+    rng: seeded((setup && setup.seed) || 12345 + Math.round((lane || 0) * 7)), jitPiece: -1, jit: 1,
     name, colorIdx, lane, laneIdx0: Math.max(0, LANE_LAT.indexOf(lane)),
     spec, motor: spec.motor, tire: spec.tire, bounces: 0,
     s: 0, v: 0, y: 0, vy: 0, state: 'ground', crashT: 0, invul: 0,
@@ -155,18 +166,23 @@ function startCrash(car, tr, kind, bounceV) {
   const c = car.c;
   const lat0 = laneLatAt(car, tr, car.s);
   c.x = p.x + nx * lat0; c.z = p.z + nz * lat0; c.y = isNaN(car.y) ? 0 : car.y;
-  car.ci = findIndex(tr, ((car.s % tr.Ltot) + tr.Ltot) % tr.Ltot); car.vaultT = 0; car.vaultObst = null; car.vaultCaught = false; car.caught = false;
-  if (kind === 'flyoff') {
-    // 관성대로 진행 방향(접선)으로 날아간다. 코너가 휘어 있으니 자연히 바깥 벽쪽으로 향한다.
-    c.vx = p.tx * car.v * 0.97; c.vz = p.tz * car.v * 0.97; c.vy = 2.2;
-  } else if (kind === 'bounce') {
-    // 착지에서 크게 튀어 비스듬히 벽 밖으로 (진행 방향 왼쪽/오른쪽은 레인 위치로 정해 모든 접속자에서 같게)
-    const side = lat0 >= 0 ? 1 : -1;
-    c.vx = p.tx * car.v * 0.8 + nx * side * 9; c.vz = p.tz * car.v * 0.8 + nz * side * 9; c.vy = bounceV;
+  car.ci = findIndex(tr, ((car.s % tr.Ltot) + tr.Ltot) % tr.Ltot); car.vaultT = 0; car.vaultObst = null; car.vaultCaught = false; car.caught = false; car.launchT = 0;
+  c.rx = (Math.random() - .5) * 9; c.rz = (Math.random() - .5) * 9; c.ry = (Math.random() - .5) * 6;
+  if (kind === 'flyoff' || kind === 'bounce') {
+    // 코스아웃: 실제 미니4WD처럼 바깥 벽을 타고 올라 트랙 밖으로 튀어 나간다.
+    // 코너면 코너 바깥쪽, 착지 튕김이면 레인이 치우친 쪽(가운데 레인은 오른쪽) — 난수를 쓰지 않아 모든 접속자에서 같은 궤적.
+    const out = kind === 'flyoff' && p.sign ? -p.sign : (lat0 > 0.1 ? 1 : -1);
+    const dWall = ROAD_HALF + WALL.T + CAR_HW - lat0 * out;            // 바깥 벽을 완전히 넘어설 때까지의 옆 거리
+    const t = Math.min(0.55, Math.max(0.3, dWall / 14)), vOut = dWall / t;
+    const need = WALL.H + 1.4;                                            // 벽 꼭대기보다 넉넉히 높게 넘는다
+    const vy = Math.max(kind === 'bounce' ? bounceV : 0, (need + 0.5 * G * t * t) / t);
+    const fwd = car.v * (kind === 'flyoff' ? 0.62 : 0.55);
+    c.vx = p.tx * fwd + nx * out * vOut; c.vz = p.tz * fwd + nz * out * vOut; c.vy = vy;
+    car.launchT = 1.2;                                                      // 벽 바깥에 닿을 때까지(최대 1.2초) 칸막이·벽 충돌 없음
+    c.rz = out * -(5 + Math.min(6, car.v * 0.06)); c.rx = (Math.random() - .5) * 4;     // 바깥으로 구르며 떨어진다
   } else { // 'gap' 추락
     c.vx = p.tx * car.v * 0.4; c.vz = p.tz * car.v * 0.4; c.vy = Math.min(car.vy, 0);
   }
-  c.rx = (Math.random() - .5) * 9; c.rz = (Math.random() - .5) * 9; c.ry = (Math.random() - .5) * 6;
   car.events.push({ type: kind === 'flyoff' ? 'flyoff' : kind === 'bounce' ? 'bounceout' : 'fall' });
   car.v = 0;
 }
@@ -176,7 +192,7 @@ export function stepCar(car, tr, dt, raceT, laps) {
   if (car.invul > 0) car.invul -= dt;
 
   if (car.state === 'crash') {
-    car.crashT += dt; crashStep(car, tr, dt);
+    car.crashT += dt * CRASH_TIME; crashStep(car, tr, dt * CRASH_TIME);
     if (car.crashT > RESPAWN_T + (car.caught ? 0.6 : 0)) {
       const base = Math.floor(car.s / tr.Ltot) * tr.Ltot;
       // 코스 아웃: 해당 코너 입구로 / 점프 추락: 착지대 쪽으로 복구(무한 실패 방지)
@@ -197,7 +213,7 @@ export function stepCar(car, tr, dt, raceT, laps) {
       // 반발(rest)만큼 다시 튀어 오르고, 너무 높이 튀면 벽을 넘어 코스아웃. 매스댐퍼가 반발을 줄인다.
       const gs = sampleAt(tr, car.s).slope, imp = Math.max(0, car.v * gs - car.vy), b = imp * car.spec.rest;
       car.y = g; car.v *= 0.93;
-      if (car.invul <= 0 && b > BOUNCE_OUT) { car.bounces++; startCrash(car, tr, 'bounce', b); return; }
+      if (car.invul <= 0 && b > car.spec.bounceOut) { car.bounces++; startCrash(car, tr, 'bounce', b); return; }
       if (b > BOUNCE_HOP) { car.vy = b + car.v * gs; car.y = g + 0.01; car.events.push({ type: 'hop', speed: b }); return; }      // 통통 튀고 다시 착지
       car.state = 'ground'; car.events.push({ type: 'land', speed: car.v });
     } else if (car.y < -8) startCrash(car, tr, 'gap');
@@ -221,7 +237,8 @@ export function stepCar(car, tr, dt, raceT, laps) {
     const Rc = Math.max(8, info.R - info.sign * laneLatAt(car, tr, car.s)), vc = vcrit(car.tire, Rc);
     ds = info.R / Rc;
     // 타이어 한계(vc)를 넘으면 롤러가 바깥 벽을 타고 돈다: 롤러 마찰만큼 감속, 롤러 세팅이 버틸 수 있는 한계(hold)를 넘으면 코스아웃
-    if (car.invul <= 0 && car.v > Math.sqrt(WALL_G * Rc) * sp.hold) { startCrash(car, tr, 'flyoff'); return; }
+    if (info.piece !== car.jitPiece) { car.jitPiece = info.piece; car.jit = 1 - sp.wobble * car.rng(); }     // 코너 부품마다 한 번: 이번 코너에서 롤러가 버티는 정도
+    if (car.invul <= 0 && car.v > Math.sqrt(WALL_G * Rc) * sp.hold * car.jit) { startCrash(car, tr, 'flyoff'); return; }
     if (car.v > vc) { acc -= (car.v - vc) * sp.fric; car.scrape = true; car.scrapeSide = -info.sign; ds = info.R / Math.max(8, Rc - sp.wideIn); }
   }
   car.v = Math.max(0, car.v + acc * dt);

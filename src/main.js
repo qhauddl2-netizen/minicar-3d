@@ -2,11 +2,11 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { PIECES, PRESETS, ROAD_HALF, K, FLIP, buildTrack, sampleAt } from './track.js';
+import { PIECES, PRESETS, PRESET_LEVEL, ROAD_HALF, K, FLIP, buildTrack, sampleAt } from './track.js';
 import { mod8, rot, pinfo, endPos, worldPts, collides, neighborsOf, openConns, allConns, match, poseForAttach, traverse, newId, setIdBase, layoutFromSeq } from './layout.js';
-import { MOTORS, TIRES, makeCar, stepCar, vcrit, launchSpeed, laneLatAt, laneLiftAt, laneGroundE, laneBridgeE, laneBridgeLift, LANE_LAT, BRIDGE_H } from './sim.js';
+import { TIME_SCALE, CRASH_TIME, MOTORS, TIRES, makeCar, stepCar, vcrit, launchSpeed, laneLatAt, laneLiftAt, laneGroundE, laneBridgeE, laneBridgeLift, LANE_LAT, BRIDGE_H } from './sim.js';
 import { backend, courseKey, rng, setSeedCourses } from './backend.js';
-import { KIT_PRESETS, DEFAULT_KIT, partOf, normalizeKit, encodeKit, deriveSpec } from './parts.js';
+import { KIT_PRESETS, DEFAULT_KIT, partOf, normalizeKit, encodeKit, deriveSpec, lockKit, unlocksAt, nextUnlock, GARAGE_UNLOCK } from './parts.js';
 import { createGarage } from './garage.js';
 
 const WALL_H = 1.6;
@@ -22,6 +22,7 @@ const DIV_LAT = 2.5;                 // 레인 칸막이 위치
 const GRID = 5, SNAP_R = 38;
 const $ = id => document.getElementById(id);
 const wrapAngle = a => { while (a > Math.PI) a -= Math.PI * 2; while (a < -Math.PI) a += Math.PI * 2; return a; };
+const fmtS = t => fmt(t == null ? t : t / TIME_SCALE);      // 시뮬레이션 시간 → 화면에 보이는 실제 시간
 const fmt = t => { if (t == null || !isFinite(t)) return '--'; const m = Math.floor(t / 60), s = t - m * 60; return `${m}:${s.toFixed(2).padStart(5, '0')}`; };
 const store = { get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } }, set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* */ } } };
 const hexs = n => '#' + n.toString(16).padStart(6, '0');
@@ -874,7 +875,24 @@ class CarVis {
 
 /* ---- 내 미니카 세팅 (커스텀 kit: 모터·기어·타이어·롤러·매스댐퍼·브레이크·바디) ---- */
 const _oldSetups = store.get('mini4wd.setups', null);
-let myKit = normalizeKit(store.get('mini4wd.kit', null) || store.get('mini4wd.mySetup', (_oldSetups && _oldSetups[0]) || DEFAULT_KIT));
+/* 레이스 완주 횟수: 결과 화면이 뜰 때마다 +1 (관전 제외). 횟수에 따라 커스텀 부품이 해금된다 */
+let races = Math.max(0, store.get('mini4wd.races', 0) | 0);
+let myKit = lockKit(store.get('mini4wd.kit', null) || store.get('mini4wd.mySetup', (_oldSetups && _oldSetups[0]) || DEFAULT_KIT), races);   // 아직 잠긴 부품은 키트 기본으로
+/** 홈의 커스텀 버튼: 아직 확인하지 않은 새 해금이 있으면 NEW 표시 */
+const garageLocked = () => races < GARAGE_UNLOCK;
+function updateUnlockDot() {
+  const seen = store.get('mini4wd.racesSeen', 0), locked = garageLocked();
+  $('carSetup').classList.toggle('locked', locked); $('carSetup').setAttribute('aria-disabled', locked ? 'true' : 'false');
+  $('carSetupLabel').textContent = locked ? '🔒 미니카 커스텀' : '🔧 미니카 커스텀';
+  $('carSetup').classList.toggle('newdot', !locked && races > seen && (seen < GARAGE_UNLOCK || unlocksSince(seen)));   // 커스텀이 처음 열렸거나 새 부품이 생기면 NEW
+}
+const unlocksSince = n => { for (let i = n + 1; i <= races; i++) if (unlocksAt(i).length) return true; return false; };
+/** 커스텀 열기: 아직 잠겼으면 남은 횟수 안내 */
+function openGarage(btn) {
+  if (!garageLocked()) { garage.open(); return; }
+  toast(`레이스 ${GARAGE_UNLOCK}회 완주 후 풀려요 (앞으로 ${GARAGE_UNLOCK - races}회)`);
+  if (btn) { btn.classList.remove('shake'); void btn.offsetWidth; btn.classList.add('shake'); }
+}
 const myPayload = () => ({ motor: myKit.motor, tire: myKit.tire, kit: encodeKit(myKit) });
 function setMyKit(k) {
   myKit = normalizeKit(k); store.set('mini4wd.kit', myKit); renderMyCar();
@@ -883,19 +901,22 @@ function setMyKit(k) {
 }
 const garage = createGarage({
   getKit: () => myKit,
+  getRaces: () => races,
+  onOpen: () => { store.set('mini4wd.racesSeen', races); updateUnlockDot(); },
   onApply: setMyKit,
   getCourse: () => (loop.valid ? { track: loop.track, name: V.screen === 'room' ? '이 방의 코스' : '현재 코스' } : null),
 });
 function renderMyCar() {
   const sp = deriveSpec(myKit), P = k => partOf(myKit, k);
-  $('myCar').innerHTML = `<div class="hd"><span class="dot" style="background:${hexs(STYLES[0].main)}"></span>🙋 내 미니카<button class="btn blue mini" id="myCarEdit">🔧 커스텀</button></div>
+  $('myCar').innerHTML = `<div class="hd"><span class="dot" style="background:${hexs(STYLES[0].main)}"></span>🙋 내 미니카<button class="btn blue mini ${garageLocked() ? 'locked' : ''}" id="myCarEdit" title="${garageLocked() ? `레이스 ${GARAGE_UNLOCK}회 완주후 풀림` : ''}">${garageLocked() ? '🔒' : '🔧'} 커스텀</button></div>
     <div class="kitline"><b>${P('motor').name}</b> · ${P('gear').name.split(' ')[0]} · ${P('tire').name} ${P('dia').mm}mm</div>
     <div class="kitline">${P('roller').name} ×${P('rlay').n} · ${P('plate').name}</div>
     <div class="kitline">${P('damper').id === 'none' ? '매스댐퍼 없음' : P('damper').name} · ${P('brake').id === 'none' ? '브레이크 없음' : P('brake').name}</div>
     <div class="st">최고 ${(sp.vmax * KMH).toFixed(1)}km/h · 전폭 ${sp.width}mm · ${Math.round(sp.mass)}g</div>`;
-  $('myCarEdit').onclick = () => garage.open();
+  $('myCarEdit').onclick = () => openGarage($('myCarEdit'));
 }
-$('carSetup').onclick = () => garage.open();
+$('carSetup').onclick = () => openGarage($('carSetup'));
+updateUnlockDot();
 
 /* ====================================================================
  *  레이스
@@ -903,6 +924,8 @@ $('carSetup').onclick = () => garage.open();
 let cars = [], vis = [], raceT = 0, countT = 0, lastCount = 4, camMode = 0, selCar = 0, finishAt = 0, resultShown = false;
 let LAPS = 3, camH = 0, shake = 0, msgT = 0, standTimer = 0;
 const camPos = new THREE.Vector3(), camLook = new THREE.Vector3();
+/* 카메라는 '차 기준 상대 위치'를 부드럽게 바꾼다 → 차가 빨라도 뒤로 처지지 않고 일정한 거리에서 따라간다 */
+const camOff = new THREE.Vector3(); let camOffOk = false;
 
 function ranking() {
   return [...cars].sort((a, b) => { if (a.finished && b.finished) return a.finishTime - b.finishTime; if (a.finished) return -1; if (b.finished) return 1; return b.s - a.s; });
@@ -919,7 +942,7 @@ function startRace(opts) {
   roster = roomRoster.list; LAPS = LAPS_FIXED;
   if (!track) { track = loop.track; buildBuiltMesh(track); }
   vis.forEach(v => v.dispose()); vis = []; cars = [];
-  roster.forEach((r, i) => { const kit = normalizeKit(r.kit || { motor: r.motor, tire: r.tire }), c = makeCar({ kit }, LANES[r.lane], r.name, i); c.speedMul = r.speedMul; c.s = 0; c.laps = 0; cars.push(c); vis.push(new CarVis(STYLES[i], kit)); });     // 출발선에서 시작 (GO 와 함께 초기 속도를 받는다)
+  roster.forEach((r, i) => { const kit = normalizeKit(r.kit || { motor: r.motor, tire: r.tire }), c = makeCar({ kit, seed: r.seed || i + 1 }, LANES[r.lane], r.name, i); c.speedMul = r.speedMul; c.s = 0; c.laps = 0; cars.push(c); vis.push(new CarVis(STYLES[i], kit)); });     // 출발선에서 시작 (GO 와 함께 초기 속도를 받는다)
   mode = 'countdown'; countT = (opts && opts.countT0) || 0; raceT = 0; simAcc = 0; lastCount = 4; finishAt = 0; resultShown = false; selCar = 0;
   $('editor').classList.add('hide'); $('home').classList.add('hide'); $('race').classList.remove('hide'); $('camMenu').classList.add('hide'); $('result').classList.add('hide'); $('toast').classList.add('hide');
   $('msg').textContent = ''; $('center').textContent = ''; syncView();
@@ -948,7 +971,7 @@ function poseCars(dt) {
     v.model.visible = c.invul > 0 ? (Math.floor(performance.now() / 90) % 2 === 0) : true;
     if (c.state === 'crash') {
       g.position.set(c.c.x, c.c.y, c.c.z);
-      v.spin.x += c.c.rx * dt; v.spin.y += c.c.ry * dt; v.spin.z += c.c.rz * dt;
+      const sd = dt * TIME_SCALE * CRASH_TIME; v.spin.x += c.c.rx * sd; v.spin.y += c.c.ry * sd; v.spin.z += c.c.rz * sd;
       g.rotation.set(v.spin.x, v.yaw + v.spin.y, v.spin.z); return;
     }
     const p = sampleAt(track, c.s);
@@ -959,7 +982,7 @@ function poseCars(dt) {
     const pitch = c.state === 'air' ? Math.atan2(c.vy, Math.max(1, c.v)) : Math.atan(p.slope + laneLiftAt(c, track, c.s).slope);
     v.roll += ((c.scrape ? -c.scrapeSide * 0.08 : 0) - v.roll) * Math.min(1, 10 * dt);
     g.rotation.set(-pitch, v.yaw, v.roll);
-    const dist = c.v * dt;
+    const dist = c.v * dt * TIME_SCALE;
     v.wheelsF.forEach(w => w.rotation.x -= dist / (0.66 * v.wk)); v.wheelsR.forEach(w => w.rotation.x -= dist / (0.76 * v.wk));
     v.rollers.forEach(r => r.rotation.y += dist * 0.9);
     if (c.scrape && dt > 0) for (let k = 0; k < 2; k++) {
@@ -979,7 +1002,7 @@ function handleEvents(c, i) {
     else if (e.type === 'hop') { beep(420, .07, 'triangle', .07); if (i === selCar) shake = Math.max(shake, 0.25); }
     else if (e.type === 'bounceout') { say(`${c.name} 착지에서 튕겨 나갔다! 💥`, '#ff8d8d'); beep(120, .4, 'sawtooth', .12); if (i === selCar) shake = 0.8; }
     else if (e.type === 'flyoff') { say(`${c.name} 코스 아웃! 💥`, '#ff8d8d'); beep(120, .4, 'sawtooth', .12); if (i === selCar) shake = 0.8; }
-    else if (e.type === 'lap' && i === selCar && e.n < LAPS) say(`${c.name} LAP ${e.n} · ${fmt(e.time)}`, col);
+    else if (e.type === 'lap' && i === selCar && e.n < LAPS) say(`${c.name} LAP ${e.n} · ${fmtS(e.time)}`, col);
     else if (e.type === 'finish') { say(`🏁 ${c.name} 골인!`, col); beep(880, .4, 'triangle', .14); if (!finishAt) finishAt = raceT; }
   }
 }
@@ -991,7 +1014,7 @@ function snapCam() {
   const c = cars[selCar], p = sampleAt(track, c.s), y = isNaN(c.y) ? 0 : c.y;
   if (camMode === 1) { const k = portraitK(); camPos.set(p.x + AERIAL_OFF.x * k, y + AERIAL_OFF.y * k, p.z + AERIAL_OFF.z * k); camLook.set(p.x, y, p.z); }
   else { const [d, h] = camDefs(); camPos.set(p.x - p.tx * d, y + h, p.z - p.tz * d); camLook.set(p.x + p.tx * 6, y + 1, p.z + p.tz * 6); }
-  camera.position.copy(camPos); camera.lookAt(camLook);
+  camera.position.copy(camPos); camera.lookAt(camLook); camOffOk = false;
 }
 function fitAerial() {
   let mnx = 1e9, mxx = -1e9, mnz = 1e9, mxz = -1e9;
@@ -1023,10 +1046,12 @@ function updateCamera(dt) {
   if (camMode === 3) { controls.target.lerp(g.position, 1 - Math.exp(-6 * dt)); controls.update(); return; }
   const base = g.position, k = 1 - Math.exp(-8 * dt);
   let tx, ty, tz;
+  if (!camOffOk) { camOff.copy(camPos).sub(base); camOffOk = true; }
+  const follow = () => { camOff.x += (tx - base.x - camOff.x) * k; camOff.y += (ty - base.y - camOff.y) * k; camOff.z += (tz - base.z - camOff.z) * k; camPos.copy(base).add(camOff); };
   if (camMode === 1) {   // 항공 추적: 방위 고정(북), 시점 회전은 lookYaw/lookPitch/lookZoom
     const len = AERIAL_OFF.length() * lookZoom * portraitK(), e = THREE.MathUtils.clamp(Math.atan2(AERIAL_OFF.y, AERIAL_OFF.z) + lookPitch, 0.15, 1.5);
     tx = base.x + Math.sin(lookYaw) * len * Math.cos(e); ty = base.y + len * Math.sin(e); tz = base.z + Math.cos(lookYaw) * len * Math.cos(e);
-    camPos.x += (tx - camPos.x) * k; camPos.y += (ty - camPos.y) * k; camPos.z += (tz - camPos.z) * k;
+    follow();
     camera.position.copy(camPos); camera.lookAt(base.x, base.y, base.z);
     camera.fov += (55 - camera.fov) * Math.min(1, 5 * dt); camera.updateProjectionMatrix(); return;
   }
@@ -1036,13 +1061,13 @@ function updateCamera(dt) {
   const [d, h] = camDefs(), back = d + c.v * 0.05;
   const len = Math.hypot(back, h) * lookZoom, e = THREE.MathUtils.clamp(Math.atan2(h, back) + lookPitch, 0.03, 1.45), az = camH + Math.PI + lookYaw;
   tx = base.x + Math.sin(az) * len * Math.cos(e); ty = Math.max(base.y + len * Math.sin(e), laneCamMinY(c)); tz = base.z + Math.cos(az) * len * Math.cos(e);
-  camPos.x += (tx - camPos.x) * k; camPos.y += (ty - camPos.y) * k; camPos.z += (tz - camPos.z) * k;
+  follow(); camPos.y = Math.max(camPos.y, laneCamMinY(c));
   const fw = Math.max(0, 1 - (Math.abs(lookYaw) + Math.abs(lookPitch)) * 2);      // 시점을 돌리면 차 자체를 바라봄
   camLook.set(base.x + Math.sin(camH) * 6 * fw, base.y + 1.2, base.z + Math.cos(camH) * 6 * fw);
   camera.position.copy(camPos);
   if (shake > 0) { camera.position.x += (Math.random() - .5) * shake; camera.position.y += (Math.random() - .5) * shake; shake = Math.max(0, shake - dt * 2); }
   camera.lookAt(camLook);
-  const fov = 58 + c.v * 0.12; camera.fov += (fov - camera.fov) * Math.min(1, 5 * dt); camera.updateProjectionMatrix();
+  const fov = Math.min(76, 58 + c.v * 0.17); camera.fov += (fov - camera.fov) * Math.min(1, 5 * dt); camera.updateProjectionMatrix();
 }
 
 /* ---- 시점 조작: 방향키 / 마우스 드래그 / 휠 (편집 화면과 주행 화면 공통) ---- */
@@ -1099,10 +1124,10 @@ canvas.addEventListener('pointerup', endLookDrag); canvas.addEventListener('poin
 canvas.addEventListener('wheel', ev => { if (mode === 'build' || camMode >= 2) return; ev.preventDefault(); lookZoom = clampN(lookZoom * Math.exp(ev.deltaY * 0.001), 0.4, 3); }, { passive: false });
 function updateStandings() {
   const rk = ranking(), el = $('stand');
-  let h = `<div class="head">🏁 ${LAPS}랩 · ${fmt(raceT)}</div>`;
+  let h = `<div class="head">🏁 ${LAPS}랩 · ${fmtS(raceT)}</div>`;
   rk.forEach((c, i) => {
     const st = c.state === 'crash' ? '💥' : c.state === 'air' ? '🚀' : c.scrape ? '🔥' : '';
-    const info = c.finished ? fmt(c.finishTime) : `LAP ${Math.max(1, Math.min(LAPS, c.laps + 1))}/${LAPS} · ${Math.round(c.v * KMH)}km/h`;
+    const info = c.finished ? fmtS(c.finishTime) : `LAP ${Math.max(1, Math.min(LAPS, c.laps + 1))}/${LAPS} · ${Math.round(c.v * KMH)}km/h`;
     h += `<div class="r ${c.colorIdx === selCar ? 'sel' : ''}" data-i="${c.colorIdx}"><b>${i + 1}</b><span class="dot" style="background:${hexs(STYLES[c.colorIdx].main)};width:13px;height:13px"></span>${c.name} ${st}<span class="t">${info}</span></div>`;
   });
   el.innerHTML = h; el.querySelectorAll('.r').forEach(r => r.onclick = () => { selCar = +r.dataset.i; });
@@ -1112,10 +1137,26 @@ function showResult() {
   const rk = ranking(), win = rk[0];
   $('resTitle').textContent = `🏆 ${win.name} 우승!`;
   $('resTable').innerHTML = '<tr><th>순위</th><th>차</th><th>기록</th><th>베스트 랩</th><th>코스아웃</th></tr>' + rk.map((c, i) =>
-    `<tr><td>${i + 1}</td><td style="color:${hexs(STYLES[c.colorIdx].main)};font-weight:800">${c.name}</td><td>${c.finished ? fmt(c.finishTime) : '주행 중'}</td><td>${fmt(c.bestLap)}</td><td>${c.crashes}</td></tr>`).join('');
+    `<tr><td>${i + 1}</td><td style="color:${hexs(STYLES[c.colorIdx].main)};font-weight:800">${c.name}</td><td>${c.finished ? fmtS(c.finishTime) : '주행 중'}</td><td>${fmtS(c.bestLap)}</td><td>${c.crashes}</td></tr>`).join('');
   $('result').classList.remove('hide');
   startConfetti();
+  countRace();
   submitMyRecord();
+}
+/** 레이스 1회 완주 → 해금 확인. 새로 열린 부품을 결과 화면에 보여 준다 */
+function countRace() {
+  const el = $('resUnlock'); el.innerHTML = ''; el.classList.add('hide');
+  if (V.role === 'spectator') return;
+  races++; store.set('mini4wd.races', races); updateUnlockDot(); renderMyCar();
+  // 어떤 부품이 열렸는지는 커스텀 화면에서 확인 — 결과 팝업에는 해금 사실만 알린다
+  const newParts = unlocksAt(races).length > 0, newGarage = races === GARAGE_UNLOCK, nx = nextUnlock(races);
+  const next = garageLocked() ? `<div class="ru-next">미니카 커스텀까지 레이스 <b>${GARAGE_UNLOCK - races}회</b></div>`
+    : nx ? `<div class="ru-next">다음 해금까지 레이스 <b>${nx.at - races}회</b></div>` : '<div class="ru-next">🎉 모든 부품을 해금했어요!</div>';
+  const got = newGarage || newParts;
+  el.innerHTML = got
+    ? `<div class="ru-h">🔓 ${newGarage ? '미니카 커스텀이 열렸어요!' : '새 부품 해금!'} <small>(레이스 ${races}회 완주)</small></div><div class="ru-sub">미니카 커스텀에서 확인해 보세요</div>${next}`
+    : `<div class="ru-h sm">🏁 레이스 ${races}회 완주</div>${next}`;
+  el.classList.toggle('got', got); el.classList.remove('hide');
 }
 /* 우승 팝업: 색종이가 위에서 떨어지는 효과 (팝업이 닫히면 멈춘다) */
 let confettiRaf = 0;
@@ -1195,8 +1236,61 @@ let modalCleanup = null;
 function openModal(title, html) { $('modalTitle').textContent = title; $('modalBody').innerHTML = html; $('modal').classList.remove('hide'); }
 function closeModal() { $('modal').classList.add('hide'); const f = modalCleanup; modalCleanup = null; if (f) f(); }
 $('modalClose').onclick = closeModal;
-const courseInfo = () => loop.valid ? { key: courseKey(loop.seq), hint: l => loop.track.Ltot * l / 52 } : null;   // hint: 더미 기록 생성용 대략적 소요 시간
+/** 랭킹 보드 키: 코스(부품 순서) + ~v2(속도 조정 이후 실제 시간 기준). hint: 더미 기록 생성용 대략적 소요 시간 */
+const boardKey = seq => courseKey(seq) + '~v2';
+const boardHint = tr => l => tr.Ltot * l / 52 / TIME_SCALE;
+const courseInfo = () => loop.valid ? { key: boardKey(loop.seq), hint: boardHint(loop.track) } : null;   // ~v2: 실제 시간 기준 기록(속도 조정 이후) — 예전 기록과 섞이지 않게 보드 분리   // hint: 더미 기록 생성용 대략적 소요 시간
 const DUMMY_NOTE = backend.rankKind === 'firebase' ? '' : '<div class="hint">※ 지금은 더미 데이터예요. 기록은 이 브라우저에만 저장됩니다.</div>';
+
+/* ---- 랭킹 창 (홈 메뉴): 내 기록 + 코스별 전체 랭킹 ----
+ * 코스별 랭킹은 사람마다 최고 기록 1개 → 새 사람이 완주할수록 참가자가 계속 늘어난다.
+ * 서버 읽기를 아끼려고 탭을 누를 때만 불러오고, 창이 열려 있는 동안은 결과를 기억한다. */
+const rankTr = (x, rank) => `<tr class="${x.me ? 'me' : ''}"><td>${rank <= 3 ? ['🥇', '🥈', '🥉'][rank - 1] : rank}</td><td>${esc(x.name)}${x.me ? ' <b>(나)</b>' : ''}</td><td>${fmt(x.time)}</td><td>${fmt(x.best)}</td><td class="rk-set">${mName(x.motor)} / ${tName(x.tire)}</td></tr>`;
+function rankCourses() {
+  const list = Object.keys(PRESETS).map(name => ({ id: 'p:' + name, name, seq: PRESETS[name], level: PRESET_LEVEL[name] || 0 }));
+  if (loop.valid && !list.some(c => courseKey(c.seq) === courseKey(loop.seq))) list.push({ id: 'cur', name: V.screen === 'room' ? '이 방의 코스' : '내가 만든 코스', seq: loop.seq.slice(), level: 0 });
+  return list.map(c => { const tr = buildTrack(c.seq); return { ...c, key: boardKey(c.seq), hint: boardHint(tr), len: tr.Ltot }; });
+}
+async function showRankingHome(startId) {
+  const courses = rankCourses(), cache = new Map(), laps = LAPS_FIXED;
+  let cur = startId || 'me', token = 0;
+  openModal('🏆 랭킹', '');
+  const tabs = () => `<div class="rk-tabs">${[{ id: 'me', name: '👤 내 기록' }, ...courses].map(c => `<button class="btn rk-tab ${c.id === cur ? 'on' : ''}" data-id="${esc(c.id)}">${esc(c.name)}</button>`).join('')}</div>`;
+  const render = html => {
+    if (!modalOpen()) return;
+    const sc = $('modalBody').querySelector('.rk-tabs'), x = sc ? sc.scrollLeft : 0;
+    $('modalBody').innerHTML = tabs() + `<div class="rk-body">${html}</div>` + DUMMY_NOTE;
+    const nt = $('modalBody').querySelector('.rk-tabs'); nt.scrollLeft = x;
+    const on = nt.querySelector('.on'); if (on && !sc) on.scrollIntoView({ block: 'nearest', inline: 'center' });
+    nt.querySelectorAll('[data-id]').forEach(b => b.onclick = () => { cur = b.dataset.id; show(); });
+  };
+  const load = c => { if (!cache.has(c.id)) cache.set(c.id, backend.topRecords({ courseKey: c.key, laps, hint: c.hint(laps), limit: c.lim || 10 }).catch(() => null)); return cache.get(c.id); };
+  async function show() {
+    const my = ++token;
+    render('<div class="hint" style="padding:18px 0;text-align:center">불러오는 중…</div>');
+    if (cur === 'me') {
+      const rs = await Promise.all(courses.map(c => load(c)));
+      if (my !== token) return;
+      const done = rs.filter(r => r && r.myBest).length;
+      render(`<div class="rk-sum">🏁 레이스 완주 <b>${races}회</b> · 기록이 있는 코스 <b>${done}/${courses.length}</b></div>
+        <table class="rk"><tr><th>코스</th><th>내 최고 기록</th><th>순위</th></tr>${courses.map((c, i) => { const r = rs[i];
+          return `<tr class="rk-row" data-go="${esc(c.id)}"><td>${esc(c.name)}${c.level ? ` <small class="rk-lv">${'★'.repeat(c.level)}</small>` : ''}</td><td>${r && r.myBest ? fmt(r.myBest.time) : '<span class="hint">—</span>'}</td><td>${r && r.myRank ? `<b>${r.myRank}</b>/${r.total}` : r ? `<span class="hint">${r.total}명 참가</span>` : '<span class="hint">오류</span>'}</td></tr>`; }).join('')}</table>
+        <div class="hint" style="margin-top:6px">코스 이름을 누르면 그 코스의 전체 랭킹을 볼 수 있어요.</div>`);
+      $('modalBody').querySelectorAll('[data-go]').forEach(t => t.onclick = () => { cur = t.dataset.go; show(); });
+      return;
+    }
+    const c = courses.find(x => x.id === cur); if (!c) return;
+    const r = await load(c);
+    if (my !== token) return;
+    if (!r) { render('<div class="hint" style="padding:18px 0;text-align:center">랭킹을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.</div>'); return; }
+    const mine = r.myBest && !r.rows.some(x => x.me) ? `<tr class="rk-gap"><td colspan="5">⋯</td></tr>${rankTr({ ...r.myBest, me: true }, r.myRank)}` : '';
+    render(`<div class="rk-sum"><b>${esc(c.name)}</b>${c.level ? ` <span class="rk-lv">${'★'.repeat(c.level)}</span>` : ''} · ${c.seq.length}개 부품 · ${laps}랩<br>
+        참가자 <b>${r.total}명</b> · ${r.myRank ? `내 순위 <b>${r.myRank}위</b> (${fmt(r.myBest.time)})` : '아직 내 기록이 없어요'}</div>
+      ${r.rows.length ? `<table class="rk"><tr><th>#</th><th>이름</th><th>기록</th><th>베스트 랩</th><th>세팅</th></tr>${r.rows.map(x => rankTr(x, x.rank)).join('')}${mine}</table>`
+        : '<div class="hint" style="padding:14px 0;text-align:center">아직 기록이 없어요. 첫 기록의 주인공이 되어 보세요!</div>'}`);
+  }
+  show();
+}
 
 /* ---- 랭킹 (결과 화면에서 열기) ---- */
 async function showRanking() {
@@ -1214,10 +1308,11 @@ async function submitMyRecord() {
   const me = cars[0], ci = courseInfo();
   if (V.role === 'spectator' || !me || !me.finished || !ci) return;
   const best = isFinite(me.bestLap) && me.bestLap > 0 ? me.bestLap : me.finishTime / LAPS;
-  const r = await backend.submitRecord({ courseKey: ci.key, laps: LAPS, hint: ci.hint(LAPS), time: me.finishTime, best, motor: roster[0].motor, tire: roster[0].tire });
+  const r = await backend.submitRecord({ courseKey: ci.key, laps: LAPS, hint: ci.hint(LAPS), time: me.finishTime / TIME_SCALE, best: best / TIME_SCALE, motor: roster[0].motor, tire: roster[0].tire });
   el.innerHTML = r.improved ? `🏅 기록 저장! 이 코스(${LAPS}랩) <b>${r.rank}위 / ${r.total}명</b>` : `이 코스(${LAPS}랩) 내 최고 기록보다 느려요 · 현재 순위 ${r.rank}위 / ${r.total}명`;
 }
 $('resRankBtn').onclick = () => showRanking();
+$('homeRank').onclick = () => showRankingHome();
 
 /* ---- 배경음악: 접속하면 바로 재생 (브라우저가 막으면 첫 터치/키 입력에서 시작), 버튼으로 끄고 켜기 ---- */
 const bgm = new Audio('assets/sounds/bgm.mp3'); bgm.loop = true; bgm.volume = 0.35; bgm.preload = 'auto';
@@ -1407,6 +1502,7 @@ function rosterFromRoom(snap) {
       players.push({ name: ai[k++], motor: kit.motor, tire: kit.tire, kit, lane, speedMul: 0.97 + r() * 0.03 });
     }
   }
+  players.forEach(p => { p.seed = ((snap.seed || 1) * 31 + p.lane * 7919 + 1) >>> 0; });     // 코너 흔들림 난수: 방 시드 + 레인 → 모든 접속자에서 같다
   players.sort((a, b) => (b.uid === me) - (a.uid === me) || a.lane - b.lane);   // 나를 0번(파란 차)으로
   return players;
 }
@@ -1449,11 +1545,11 @@ function frame(now) {
     }
     if (mode === 'race') {
       // 고정 시간 간격(1/120초) 시뮬레이션 — 프레임 속도와 무관하게 모든 접속자에서 같은 결과
-      const H = 1 / 120; simAcc += dt;
+      const H = 1 / 120; simAcc += dt * TIME_SCALE;
       let n = 0;
-      while (simAcc >= H && n < 12) { simAcc -= H; raceT += H; n++; cars.forEach((c, i) => { stepCar(c, track, H, raceT, LAPS); if (c.events.length) handleEvents(c, i); }); }
-      if (n >= 12) simAcc = 0;
-      if (!resultShown && (cars.every(c => c.finished) || (finishAt && raceT - finishAt > 8))) showResult();
+      while (simAcc >= H && n < 48) { simAcc -= H; raceT += H; n++; cars.forEach((c, i) => { stepCar(c, track, H, raceT, LAPS); if (c.events.length) handleEvents(c, i); }); }
+      if (n >= 48) simAcc = 0;
+      if (!resultShown && (cars.every(c => c.finished) || (finishAt && raceT - finishAt > 8 * TIME_SCALE))) showResult();
     }
     poseCars(dt); updateCamera(dt);
     { const sc = cars[selCar], under = camMode === 0 && laneCamMinY(sc) > -Infinity && laneLiftAt(sc, track, sc.s).lift < 0.5;
