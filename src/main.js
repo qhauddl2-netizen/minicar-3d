@@ -1321,7 +1321,7 @@ $('resRankBtn').onclick = () => showRanking();
 $('homeRank').onclick = () => showRankingHome();
 
 /* ---- 배경음악: 접속하면 바로 재생 (브라우저가 막으면 첫 터치/키 입력에서 시작), 버튼으로 끄고 켜기 ---- */
-const bgm = new Audio('assets/sounds/bgm.mp3'); bgm.loop = true; bgm.volume = 0.4; bgm.preload = 'auto';   // 음원은 최대 -1.7dB 로 키워 둠(원본은 -20dB 로 너무 작았음)
+const bgm = new Audio('assets/sounds/bgm.mp3'); bgm.loop = true; bgm.volume = 0.35; bgm.preload = 'auto';   // 음원은 최대 -1.7dB 로 키워 둠(원본은 -20dB 로 너무 작았음)
 let bgmOn = store.get('mini4wd.bgm', true) !== false, bgmWait = false;
 function bgmUI() { const b = $('bgmBtn'); b.textContent = bgmOn ? '🔊' : '🔇'; b.title = bgmOn ? '배경음악 끄기' : '배경음악 켜기'; b.classList.toggle('off', !bgmOn); }
 function bgmPlay() {
