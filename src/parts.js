@@ -111,7 +111,7 @@ export const GROUPS = [
 export const slotList = key => (key === 'motor' ? MOTORS : key === 'tire' ? TIRES : PARTS[key]);
 export const partOf = (kit, key) => slotList(key).find(x => x.id === kit[key]);
 
-export const DEFAULT_KIT = { motor: 'hyper', gear: 'g42', bearing: 'bush', tire: 'mid', dia: 'd26', roller: 'p9', rlay: 'f2r2', plate: 'std', damper: 'none', brake: 'none', body: 'std', rheight: 'low' };
+export const DEFAULT_KIT = { motor: 'normal', gear: 'g42', bearing: 'bush', tire: 'mid', dia: 'd26', roller: 'p9', rlay: 'f2r2', plate: 'std', damper: 'none', brake: 'none', body: 'std', rheight: 'low' };
 // 동기화 문자열 순서: 새 슬롯은 항상 맨 뒤에 붙인다 (예전 문자열도 그대로 읽히게)
 const ORDER = ['motor', 'gear', 'tire', 'dia', 'roller', 'rlay', 'plate', 'damper', 'brake', 'body', 'bearing', 'rheight'];
 

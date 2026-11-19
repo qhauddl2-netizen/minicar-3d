@@ -13,6 +13,7 @@ export const CRASH_TIME = 0.5;  // 코스아웃 장면은 절반 속도(슬로�
 export const G = 40;
 const RESPAWN_T = 1.9;
 export const BOUNCE_OUT = 9;   // 착지 후 튀어 오르는 속도가 이 이상이면 벽을 넘어 코스아웃
+const JUMP_KICK_MAX = 10;      // 점프대가 더해 줄 수 있는 최대 수직 속도 (v≈24 이하면 못 넘음)
 const BOUNCE_HOP = 3.2;        // 이 이상이면 한 번 더 통통 튄다 (속도 손실)
 const BRAKE_SLOPE = 0.02;
 const WAVE_LOSS = 0.5;         // 웨이브 구간 감속 (착지 반발이 작을수록 = 매스댐퍼가 좋을수록 덜 흔들려 덜 느려진다)      // 이보다 기울어진 경사(오르막·내리막·점프대)에서 브레이크 스펀지가 노면에 닿는다
@@ -246,6 +247,8 @@ export function stepCar(car, tr, dt, raceT, laps) {
   const sNext = car.s + car.v * dt * ds, gNext = groundH(tr, sNext);
   if (isNaN(gNext) && !isNaN(info.h)) {           // 도약
     car.state = 'air'; car.vy = car.v * info.slope; car.y = info.h; car.s = sNext;
+    // 점프대 킥: 느린 차(노멀 모터 등)도 갭을 넘도록 점프대가 위로 더 튕겨 준다. 너무 느리면(상한 초과) 그대로 갭에 떨어진다
+    if (tr.seq[info.piece] === 'jump' && car.v > 0) car.vy = Math.max(car.vy, Math.min(JUMP_KICK_MAX, G * (JUMP.gapEnd - JUMP.rampEnd + 1) / (2 * car.v)));
     car.events.push({ type: 'jump', speed: car.v });
     return;
   }
