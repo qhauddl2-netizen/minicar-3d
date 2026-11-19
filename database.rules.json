@@ -17,7 +17,8 @@
         "players": {
           "$lane": {
             ".write": "auth != null && ((!data.exists() && newData.child('uid').val() === auth.uid && root.child('rooms/' + $code + '/meta/status').val() === 'lobby') || (data.exists() && data.child('uid').val() === auth.uid))",
-            ".validate": "($lane === '0' || $lane === '1' || $lane === '2') && newData.hasChildren(['uid', 'name', 'motor', 'tire'])"
+            ".validate": "($lane === '0' || $lane === '1' || $lane === '2') && newData.hasChildren(['uid', 'name', 'motor', 'tire'])",
+            "kit": { ".validate": "newData.isString() && newData.val().length <= 80" }
           }
         },
         "spectators": {

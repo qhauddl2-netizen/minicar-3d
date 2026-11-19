@@ -102,7 +102,7 @@ async function buildRooms(app, dummy, { loadUser, LANE_ORDER }) {
   function buildSnap(code, v) {
     const m = v.meta;
     let seq = null; try { seq = v.seq ? JSON.parse(v.seq) : null; } catch { /* */ }
-    const players = Object.entries(v.players || {}).map(([lane, p]) => ({ uid: p.uid, name: p.name, motor: p.motor, tire: p.tire, lane: +lane, bot: false }));
+    const players = Object.entries(v.players || {}).map(([lane, p]) => ({ uid: p.uid, name: p.name, motor: p.motor, tire: p.tire, kit: typeof p.kit === 'string' ? p.kit : null, lane: +lane, bot: false }));
     const spectators = Object.keys(v.spectators || {}).map(uid => ({ uid, name: '' }));
     return { code, title: m.title || '', hostUid: m.hostUid, seq, courseName: '', laps: m.laps, status: m.status, startAt: m.startAt || 0, seed: m.seed || 0, fillAI: !!m.fillAI, players, spectators, serverNow: srvNow() };
   }
@@ -111,10 +111,10 @@ async function buildRooms(app, dummy, { loadUser, LANE_ORDER }) {
     if (!v || !v.meta) throw new Error('사라진 방이에요.');
     return buildSnap(code, v);
   }
-  async function claimSlot(code, motor, tire) {
+  async function claimSlot(code, motor, tire, kit) {
     const u = me();
     for (const lane of LANE_ORDER) {
-      const r = await runTransaction(ref(db, `rooms/${code}/players/${lane}`), cur => cur ? undefined : { uid: u.uid, name: u.name, motor, tire });
+      const r = await runTransaction(ref(db, `rooms/${code}/players/${lane}`), cur => cur ? undefined : { uid: u.uid, name: u.name, motor, tire, kit: kit || null });
       if (r.committed) return lane;
     }
     return -1;
@@ -136,7 +136,7 @@ async function buildRooms(app, dummy, { loadUser, LANE_ORDER }) {
       });
     },
 
-    async createRoom({ title, laps, motor, tire }) {
+    async createRoom({ title, laps, motor, tire, kit }) {
       const u = me(); let code, tries = 0;
       do { code = makeCode(); if (++tries > 20) throw new Error('방 코드를 만들지 못했어요. 다시 시도해 주세요.'); } while ((await get(ref(db, `rooms/${code}/meta`))).exists());
       const created = srvNow(), t = (String(title || '').trim().slice(0, 20)) || (u.name + '의 방');
@@ -145,7 +145,7 @@ async function buildRooms(app, dummy, { loadUser, LANE_ORDER }) {
       await update(ref(db), { [`rooms/${code}/meta`]: meta, [`roomList/${code}`]: { code, title: t, hostUid: u.uid, hostName: u.name, laps, hasCourse: false, seqLen: 0, status: 'lobby', created } });
       // 2단계: 방장은 가운데 레인(1)
       const lane = LANE_ORDER[0];
-      const slot = { uid: u.uid, name: u.name, motor, tire };
+      const slot = { uid: u.uid, name: u.name, motor, tire, kit: kit || null };
       await update(ref(db), { [`rooms/${code}/players/${lane}`]: slot, [`roomList/${code}/p/${u.uid}`]: true });
       roles.set(code, 'host'); myLane.set(code, lane);
       const od1 = onDisconnect(R(code)); od1.remove(); hold(code, od1);       // 방장이 끊기면 방 삭제
@@ -153,7 +153,7 @@ async function buildRooms(app, dummy, { loadUser, LANE_ORDER }) {
       return { code, title: t, hostUid: u.uid, seq: null, courseName: '', laps, status: 'lobby', startAt: 0, seed: 0, fillAI: false, players: [{ ...slot, lane, bot: false }], spectators: [], serverNow: srvNow() };
     },
 
-    async joinRoom(code, { motor, tire }) {
+    async joinRoom(code, { motor, tire, kit }) {
       code = String(code).toUpperCase(); const u = me();
       const ms = (await get(ref(db, `rooms/${code}/meta`))).val();
       if (!ms) throw new Error('사라진 방이에요.');
@@ -161,7 +161,7 @@ async function buildRooms(app, dummy, { loadUser, LANE_ORDER }) {
       let lane = -1;
       const cur = (await get(ref(db, `rooms/${code}/players`))).val() || {};
       for (const [l, p] of Object.entries(cur)) if (p.uid === u.uid) lane = +l;
-      if (lane < 0) { lane = await claimSlot(code, motor, tire); if (lane < 0) throw new Error('방이 가득 찼어요 (최대 3명).'); }
+      if (lane < 0) { lane = await claimSlot(code, motor, tire, kit); if (lane < 0) throw new Error('방이 가득 찼어요 (최대 3명).'); }
       roles.set(code, 'guest'); myLane.set(code, lane);
       const od1 = onDisconnect(ref(db, `rooms/${code}/players/${lane}`)); od1.remove(); hold(code, od1);
       const od2 = onDisconnect(ref(db, `roomList/${code}/p/${u.uid}`)); od2.remove(); hold(code, od2);
@@ -209,9 +209,9 @@ async function buildRooms(app, dummy, { loadUser, LANE_ORDER }) {
       await update(ref(db), { [`rooms/${code}/meta/laps`]: laps, [`roomList/${code}/laps`]: laps }).catch(e => console.warn('[setRoomLaps]', e));
       return true;
     },
-    async setMySetup(code, { motor, tire }) {
+    async setMySetup(code, { motor, tire, kit }) {
       const lane = myLane.get(code); if (lane == null || roles.get(code) === 'spectator') return false;
-      await update(ref(db, `rooms/${code}/players/${lane}`), { motor, tire }).catch(() => { });
+      await update(ref(db, `rooms/${code}/players/${lane}`), { motor, tire, kit: kit || null }).catch(() => { });
       return true;
     },
     async startRoom(code, opts = {}) {

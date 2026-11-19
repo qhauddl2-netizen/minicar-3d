@@ -37,7 +37,7 @@
 
   #left { left:16px; top:70px; width:372px; max-height:calc(100% - 86px); overflow:auto; }
   #right { right:16px; top:16px; width:310px; max-height:calc(100% - 32px); overflow:auto; }
-  .pal { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+  .pal { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; }
   .pbtn { border-radius:11px; padding:4px 2px 3px; font-size:11px; letter-spacing:-0.4px; white-space:nowrap; display:flex; flex-direction:column; align-items:center; gap:0; margin-bottom:4px; }
   .pbtn svg { width:42px; height:32px; }
   .pbtn img.pico { width:auto; height:auto; max-width:88px; max-height:42px; object-fit:contain; margin:2px 0 1px; filter:drop-shadow(0 2px 2px rgba(0,0,0,.5)); pointer-events:none; user-select:none; }
@@ -188,6 +188,71 @@
   #rbtns #bgmBtn { position:static; width:auto; height:auto; padding:7px 12px; border-radius:10px; font-size:14px; }
   #loading { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:#06102a; font-size:22px; z-index:9; }
 
+  /* ================= 미니카 커스텀 (차고) ================= */
+  #garage { z-index:7; }
+  .gbox { width:min(1080px,96vw); height:min(740px,94vh); display:flex; flex-direction:column; background:rgba(10,18,44,.94); border:2px solid rgba(34,211,197,.55); border-radius:22px; box-shadow:0 20px 60px rgba(0,0,0,.55); overflow:hidden; }
+  .ghead { display:flex; align-items:center; gap:12px; padding:14px 18px 10px; border-bottom:1px solid var(--line); }
+  .ghead h1 { margin:0; font-size:24px; font-style:italic; background:linear-gradient(90deg,#ffe24a,#ffa621); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .greg-badge { font-size:11px; font-weight:800; color:#cfe6ff; background:#0b1a4a; border:1px solid #4a76e8; border-radius:20px; padding:3px 10px; }
+  #gClose { margin:0 0 0 auto; width:36px; height:36px; padding:0; border-radius:10px; font-size:15px; }
+  .gbody { flex:1; min-height:0; display:grid; grid-template-columns:400px 1fr; }
+  .gleft { min-height:0; overflow:auto; padding:12px 14px; border-right:1px solid var(--line); display:flex; flex-direction:column; gap:10px; }
+  .gright { min-height:0; display:flex; flex-direction:column; padding:10px 14px 0; }
+  .gview { display:grid; grid-template-columns:150px 1fr; gap:10px; align-items:center; }
+  .gbp { background:radial-gradient(circle at 50% 40%, #12306b, #091537); border:1px solid rgba(120,170,255,.3); border-radius:14px; padding:4px; }
+  .bp { display:block; width:100%; height:auto; }
+  .bp-chassis { fill:#3a4664; stroke:#1d2340; stroke-width:1.2; }
+  .bp-body { fill:rgba(30,107,255,.55); stroke:#80c3ff; stroke-width:1; } .bp-body.light { fill:rgba(160,220,255,.22); stroke:#cfeaff; stroke-dasharray:3 2; }
+  .bp-motor { fill:#d1a33a; stroke:#5a3f06; stroke-width:1; } .bp-mtx { font-size:5.5px; font-weight:900; fill:#1d2340; text-anchor:middle; }
+  .bp-tire { fill:#1b1d24; stroke:#000; stroke-width:.8; } .bp-tire.t-soft { fill:#3a1d24; } .bp-tire.t-hard { fill:#2b2f3a; } .bp-tire.t-low { fill:#3c3f4a; stroke:#9aa; }
+  .bp-roller { stroke:#1d2340; stroke-width:1; } .bp-roller.pl { fill:#e8ecf5; } .bp-roller.al { fill:#c9d3e6; } .bp-roller.ring { fill:#b7c3dc; }
+  .bp-damper { fill:#ffb03a; stroke:#5e3b00; stroke-width:1; }
+  .bp-brake { fill:#ff6b3d; stroke:#6a1b00; stroke-width:.8; }
+  .bp-limit { stroke:#3ddc84; stroke-width:.8; stroke-dasharray:3 3; } .bp-limit.bad { stroke:#ff5d5d; stroke-width:1.2; }
+  .bp-limtx { font-size:5px; fill:#9fb3d9; }
+  .bp-dim path { stroke:#6dffa8; stroke-width:.9; fill:none; } .bp-dim text { font-size:7px; font-weight:900; fill:#6dffa8; }
+  .bp-dim.bad path { stroke:#ff6b6b; } .bp-dim.bad text { fill:#ff8d8d; }
+  .gstats { display:flex; flex-direction:column; gap:7px; }
+  .gs-row { display:grid; grid-template-columns:56px 1fr 72px; align-items:center; gap:6px; font-size:12px; font-weight:800; }
+  .gs-l { color:#cfd9f3; white-space:nowrap; }
+  .gs-bar { position:relative; height:9px; border-radius:6px; background:rgba(255,255,255,.1); overflow:visible; }
+  .gs-bar i { position:absolute; left:0; top:0; bottom:0; border-radius:6px; background:linear-gradient(90deg,#22d3c5,#6dffa8); transition:width .25s ease; }
+  .gs-bar.inv i { background:linear-gradient(90deg,#6dffa8,#ffd36b 60%,#ff8d6b); }
+  .gs-bar b { position:absolute; top:-3px; bottom:-3px; width:2px; margin-left:-1px; background:#fff; border-radius:1px; box-shadow:0 0 3px rgba(0,0,0,.6); transition:left .25s ease; }
+  .gs-v { text-align:right; white-space:nowrap; font-size:12.5px; } .gs-v small { font-size:9.5px; opacity:.75; margin-left:1px; }
+  .gs-v em { display:block; font-style:normal; font-size:10.5px; line-height:1.1; } em.up, .chip.up { color:#6dffa8; } em.dn, .chip.dn { color:#ff8d8d; }
+  .gs-note { font-size:10px; color:#9fb3d9; font-weight:700; } .gs-note b { display:inline-block; width:2px; height:9px; background:#fff; vertical-align:-1px; margin-right:4px; }
+  .gtest { background:rgba(255,255,255,.06); border:1px solid var(--line); border-radius:14px; padding:10px 12px; min-height:84px; transition:opacity .15s; }
+  .gtest.busy { opacity:.55; }
+  .gt-h { font-size:13px; font-weight:900; color:#ffd36b; } .gt-h small { font-size:10.5px; color:#9fb3d9; font-weight:700; margin-left:4px; }
+  .gt-t { font-size:28px; font-weight:900; letter-spacing:.5px; margin:2px 0 4px; } .gt-t em { font-style:normal; font-size:13px; margin-left:8px; }
+  .gt-i { font-size:12px; font-weight:800; line-height:1.55; } .gt-i.ok { color:#6dffa8; } .gt-i.bad { color:#ff9a9a; } .gt-i small { color:#cfd9f3; font-weight:600; }
+  .gregs { display:flex; flex-direction:column; gap:3px; }
+  .greg-h { font-size:13px; font-weight:900; padding:6px 10px; border-radius:10px; margin-bottom:3px; } .greg-h.ok { background:rgba(61,220,132,.16); color:#6dffa8; } .greg-h.bad { background:rgba(255,93,93,.18); color:#ff9a9a; }
+  .greg { display:grid; grid-template-columns:1fr 64px 80px; gap:6px; font-size:12px; font-weight:700; padding:2px 10px; color:#cfd9f3; }
+  .greg b { text-align:right; color:#fff; } .greg small { text-align:right; color:#9fb3d9; font-size:11px; } .greg.bad, .greg.bad b { color:#ff8d8d; }
+  .gsec { font-size:12px; font-weight:900; color:var(--teal); margin:0 0 4px; }
+  .gpresets { display:grid; grid-template-columns:repeat(5,1fr); gap:6px; margin-bottom:10px; }
+  .gpresets .btn.preset { padding:8px 2px; font-size:12px; }
+  .gpresets .btn.preset.on { --top:#86f7ea; --m1:#27d0c1; --m2:#1ab4a7; --bot:#12998e; --bd:#064840; --sh:#075149; }
+  .gtabs { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; }
+  .gtab { margin:0; padding:9px 4px; font-size:13.5px; }
+  .gslots { flex:1; min-height:0; overflow:auto; padding:6px 2px 12px; margin-top:6px; }
+  .gslot h3 { margin:10px 0 6px; font-size:14px; color:#fff; display:flex; align-items:center; gap:6px; }
+  .gslot h3 .chg { font-style:normal; font-size:10px; background:#ffd23f; color:#3a2a00; border-radius:8px; padding:1px 7px; }
+  .gopts { display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:7px; }
+  .gopt { text-align:left; font:inherit; color:#fff; cursor:pointer; padding:8px 10px; border-radius:12px; background:rgba(255,255,255,.06); border:2px solid rgba(255,255,255,.14); display:flex; flex-direction:column; gap:2px; transition:background .12s, border-color .12s; }
+  .gopt:hover { background:rgba(255,255,255,.11); }
+  .gopt.on { background:rgba(34,211,197,.2); border-color:#22d3c5; box-shadow:0 0 0 1px rgba(34,211,197,.4) inset; }
+  .go-n { font-size:13px; font-weight:900; } .go-n .cur { font-style:normal; font-size:9.5px; font-weight:800; background:#2a3a6e; border-radius:7px; padding:1px 6px; margin-left:5px; vertical-align:1px; }
+  .go-d { font-size:11px; color:#b8c6e6; font-weight:600; line-height:1.35; }
+  .go-c { display:flex; flex-wrap:wrap; gap:3px 5px; min-height:0; } .go-c:empty { display:none; }
+  .chip { font-size:10.5px; font-weight:800; background:rgba(0,0,0,.25); border-radius:7px; padding:1px 6px; } .chip.mid { color:#cfd9f3; } .chip.bad { color:#fff; background:#c0392b; }
+  .gfoot { display:flex; gap:8px; justify-content:flex-end; padding:10px 14px; border-top:1px solid var(--line); }
+  .gfoot .btn { margin:0; font-size:15px; padding:10px 22px; }
+  #myCar .hd .btn.mini { margin:0 0 0 auto; padding:4px 10px; font-size:11.5px; }
+  .kitline { font-size:11.5px; font-weight:700; color:#cfd9f3; line-height:1.5; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
   /* ================= 모바일 (폭 820px 이하 / 가로 모드 폰) ================= */
   #mobBottom, #mobPlist, #mobLeave, .sheet-x { display:none; }
   .lv-m { display:none; }
@@ -250,7 +315,7 @@
     #mobLeave .btn { margin:0; padding:7px 12px; font-size:12px; }
     .lv-d { display:none; } .lv-m { display:inline; }
     /* 코스 부품: 한 줄에 6개 */
-    .pal { grid-template-columns:repeat(6,1fr); gap:5px; }
+    .pal { grid-template-columns:repeat(7,1fr); gap:5px; }
     .pbtn { padding:5px 0 3px; font-size:9.5px; letter-spacing:-0.4px; border-radius:9px; }
     .pbtn svg { width:100%; max-width:36px; height:26px; }
     #left h2, #right h2 { margin-bottom:6px; }
@@ -298,7 +363,25 @@
     #result .card .btn { font-size:13px !important; padding:9px 12px !important; }
     #modal .card { padding:14px 14px; max-height:90dvh; width:94vw; } #modal h1 { font-size:22px; }
     #modalClose { right:10px; top:10px; }
+
+    /* 미니카 커스텀: 전체 화면, 한 줄로 쌓아서 스크롤 · 아래 버튼 고정 */
+    .gbox { width:100vw; height:100dvh; border-radius:0; border:0; }
+    .ghead { padding:calc(8px + env(safe-area-inset-top)) 12px 8px; gap:8px; } .ghead h1 { font-size:19px; } .greg-badge { font-size:10px; padding:2px 8px; }
+    .gbody { display:block; overflow:auto; -webkit-overflow-scrolling:touch; }
+    .gleft { overflow:visible; border-right:0; padding:10px 12px 0; gap:8px; }
+    .gright { padding:8px 12px 0; }
+    .gview { grid-template-columns:118px 1fr; gap:8px; }
+    .gs-row { grid-template-columns:50px 1fr 62px; font-size:11px; gap:5px; } .gs-v { font-size:11.5px; }
+    .gtest { min-height:0; padding:8px 10px; } .gt-t { font-size:22px; } .gt-i { font-size:11px; }
+    .greg { font-size:11px; grid-template-columns:1fr 54px 70px; padding:1px 6px; } .greg small { font-size:10px; }
+    .gpresets { grid-template-columns:repeat(3,1fr); gap:6px 5px; } .gpresets .btn.preset { font-size:11.5px; padding:8px 0; }
+    .gtabs { position:sticky; top:0; z-index:2; background:rgba(10,18,44,.97); padding:6px 0; gap:5px; margin:0 -2px; }
+    .gtab { font-size:12px; padding:8px 2px; }
+    .gslots { overflow:visible; padding-bottom:8px; }
+    .gopts { grid-template-columns:1fr 1fr; gap:6px; } .gopt { padding:7px 8px; } .go-n { font-size:12px; } .go-d { font-size:10.5px; }
+    .gfoot { padding:8px 12px calc(8px + env(safe-area-inset-bottom)); } .gfoot .btn { flex:1; font-size:15px; padding:11px 0; }
   }
+  @media (max-width:380px) { .gopts { grid-template-columns:1fr; } }
   @media (max-width:380px) { .stk.big { font-size:28px; } .tools .btn { font-size:9px; } #stand { width:min(200px,56vw); } }
 </style>
 </head>
@@ -319,7 +402,7 @@
     <div id="roomList" class="clist"></div>
     <div class="row" style="margin-top:14px;flex-wrap:nowrap;gap:10px">
       <button class="btn green big half" id="makeRoom"><span class="plus"></span>방 만들기</button>
-      <button class="btn big half" id="carSetup" disabled>🔧 미니카 커스텀<small>(서비스 준비중)</small></button>
+      <button class="btn big half blue" id="carSetup">🔧 미니카 커스텀</button>
     </div>
   </div>
 </div>
@@ -393,6 +476,34 @@
     <div class="row" style="justify-content:center">
       <button class="btn blue" id="resRankBtn" style="font-size:16px;padding:10px 22px">🏆 랭킹 보기</button>
       <button class="btn red" id="editBtn" style="font-size:16px;padding:10px 22px">경기종료</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= 미니카 커스텀 (차고) ================= -->
+<div class="overlay hide" id="garage">
+  <div class="gbox">
+    <div class="ghead">
+      <h1>🔧 미니카 커스텀</h1>
+      <span class="greg-badge">타미야 공식 규정 기준</span>
+      <button class="btn" id="gClose" aria-label="닫기">✕</button>
+    </div>
+    <div class="gbody">
+      <div class="gleft">
+        <div class="gview"><div id="gBp" class="gbp"></div><div id="gStats" class="gstats"></div></div>
+        <div id="gTest" class="gtest"></div>
+        <div id="gRegs" class="gregs"></div>
+      </div>
+      <div class="gright">
+        <div class="gsec">추천 세팅</div>
+        <div id="gPresets" class="gpresets"></div>
+        <div id="gTabs" class="gtabs"></div>
+        <div id="gSlots" class="gslots"></div>
+      </div>
+    </div>
+    <div class="gfoot">
+      <button class="btn" id="gUndo">↺ 되돌리기</button>
+      <button class="btn green" id="gApply">✔ 적용</button>
     </div>
   </div>
 </div>

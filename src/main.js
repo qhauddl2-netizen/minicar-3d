@@ -6,6 +6,8 @@ import { PIECES, PRESETS, ROAD_HALF, K, FLIP, buildTrack, sampleAt } from './tra
 import { mod8, rot, pinfo, endPos, worldPts, collides, neighborsOf, openConns, allConns, match, poseForAttach, traverse, newId, setIdBase, layoutFromSeq } from './layout.js';
 import { MOTORS, TIRES, makeCar, stepCar, vcrit, launchSpeed, laneLatAt, laneLiftAt, laneGroundE, laneBridgeE, laneBridgeLift, LANE_LAT, BRIDGE_H } from './sim.js';
 import { backend, courseKey, rng, setSeedCourses } from './backend.js';
+import { KIT_PRESETS, DEFAULT_KIT, partOf, normalizeKit, encodeKit, deriveSpec } from './parts.js';
+import { createGarage } from './garage.js';
 
 const WALL_H = 1.6;
 const KMH = 0.5;
@@ -356,10 +358,13 @@ function buildBuiltMesh(tr) {
   trackGroup.add(new THREE.Mesh(bandsGeo(tr, seams, W, -W, 0.07, 1), seamMat));
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), ps = new THREE.Vector3();
   let pc = 0;
+  // 고가가 아래 코스를 넘어가는 곳(8자 코스)에서는 아래 도로 위에 기둥을 세우지 않는다
+  const onLowerRoad = (x, z, h) => { for (let j = 0; j < tr.n; j++) { const hj = tr.H[j]; if (!isNaN(hj) && hj < h - 2 && Math.hypot(tr.X[j] - x, tr.Z[j] - z) < ROAD_HALF + 2) return true; } return false; };
   for (let i = 0; i < tr.n && pc < 690; i += 4) {
     const h = tr.H[i]; if (isNaN(h) || h < 1.2) continue;
     for (const sg of [-1, 1]) {
       const x = tr.X[i] + tr.DZ[i] * sg * 4.5, z = tr.Z[i] - tr.DX[i] * sg * 4.5;
+      if (onLowerRoad(x, z, h)) continue;
       sc.set(1, h - 0.9, 1); ps.set(x, (h - 0.9) / 2, z); m4.compose(ps, q, sc); pillars.setMatrixAt(pc++, m4);
     }
   }
@@ -374,7 +379,7 @@ const flatCache = {};
 function flatGeo(type) {
   if (flatCache[type]) return flatCache[type];
   const tr = buildTrack([type]);
-  if (!(type === 'up' || type === 'down' || type === 'jump')) { tr.H = tr.H.map(h => (isNaN(h) ? NaN : 0)); tr.end = { ...tr.end, h: 0 }; }     // 경사 부품만 편집 중에도 경사로 그린다 (기준 높이는 그룹 위치로)
+  if (!(type === 'up' || type === 'down' || type === 'jump' || type === 'wave')) { tr.H = tr.H.map(h => (isNaN(h) ? NaN : 0)); tr.end = { ...tr.end, h: 0 }; }     // 경사 부품만 편집 중에도 경사로 그린다 (기준 높이는 그룹 위치로)
   return (flatCache[type] = {
     samp: { n: tr.n, X: tr.X, Z: tr.Z, DX: tr.DX, DZ: tr.DZ, H: tr.H.slice() },
     road: buildStrip(tr, [{ lat: ROAD_HALF, y: 0.03, u: 0 }, { lat: -ROAD_HALF, y: 0.03, u: 1 }], false, 16, true),
@@ -426,6 +431,8 @@ function updatePiers(o, p) {                                    // 높은 구간
     const top = y0 + h; if (top < 1.2) continue;
     const nx = g.DZ[i], nz = -g.DX[i];
     for (const s of [-4.5, 4.5]) {
+      const [wx, wz] = rot(p.k, g.X[i] + nx * s, g.Z[i] + nz * s);           // 고가 교차: 아래 지나는 다른 부품 위에는 기둥을 세우지 않는다
+      if (pieces.some(q => q.id !== p.id && (pieceY.get(q.id) || 0) + Math.max(0, DH(q.type)) < top - 2 && worldPts(q).some(w => Math.hypot(w.x - p.x - wx, w.z - p.z - wz) < ROAD_HALF + 2))) continue;
       const mesh = new THREE.Mesh(pierGeo, pierMat); mesh.userData.pier = true; mesh.scale.set(1, top - 0.9, 1);
       mesh.position.set(g.X[i] + nx * s, (top - 0.9) / 2 - y0, g.Z[i] + nz * s); mesh.castShadow = true; o.grp.add(mesh);
     }
@@ -734,11 +741,12 @@ function icon(type) {
     case 'down': return s('<path d="M4 11H15L33 31H42" stroke="#ffd36b"/><path d="M15 11V35M33 31V35" stroke="#ffd36b" stroke-width="2.5" opacity=".6"/>');
     case 'jump': return s('<path d="M5 26H15L25 12" stroke="#ffd23f"/><path d="M33 22H41" stroke="#ffd23f"/>');
     case 'brake': return s('<path d="M5 20H41" stroke="#ff6b6b" stroke-dasharray="4 6"/>');
+    case 'wave': return s('<path d="M4 24C9 24 9 15 15 15S21 24 26 24 32 15 37 15 42 24 42 24" stroke="#c9a6ff"/>');
     case 'lane': return s('<g stroke-width="4"><path d="M4 11H13C20 11 26 29 33 29H42"/><path d="M4 29H13C20 29 26 11 33 11H42" stroke="#9fd0ff"/></g>');
   }
 }
 /* 팔레트: 코너는 45° 하나만 (좌우는 F 반전, 방향은 Z/X 회전으로). 다른 부품(반 직선·90°·큰코너·브레이크)은 이미 만든 코스/추천 코스에서만 쓰인다. */
-const PAL_ORDER = ['straight', 'c45R', 'up', 'down', 'jump', 'lane'];     // 반 직선도 뺐다: 모든 부품 길이가 20의 배수라 양 끝이 항상 맞물려 닫힌 코스를 만들 수 있음
+const PAL_ORDER = ['straight', 'c45R', 'up', 'down', 'jump', 'lane', 'wave'];     // 반 직선도 뺐다: 모든 부품 길이가 20의 배수라 양 끝이 항상 맞물려 닫힌 코스를 만들 수 있음
 const PAL_LABEL = { c45R: '45° 코너' };
 const palType = t => (t === 'c45L' ? 'c45R' : t);          // 반전된 코너도 같은 타일로 취급
 PAL_ORDER.forEach(type => {
@@ -830,7 +838,7 @@ function updateParticles(dt) {
 let carModel = null;
 const blobMat = new THREE.MeshBasicMaterial({ map: canvasTex(128, 128, (g, w, h) => { const gr = g.createRadialGradient(w / 2, h / 2, 6, w / 2, h / 2, w / 2); gr.addColorStop(0, 'rgba(0,0,0,.6)'); gr.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = gr; g.fillRect(0, 0, w, h); }, false), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
 class CarVis {
-  constructor(style) {
+  constructor(style, kit) {
     this.group = new THREE.Group(); this.group.rotation.order = 'YXZ';
     const m = carModel.clone(true); m.rotation.y = Math.PI;
     m.traverse(o => {
@@ -843,6 +851,13 @@ class CarVis {
     this.wheelsF = ['wheel_FL', 'wheel_FR'].map(n => m.getObjectByName(n));
     this.wheelsR = ['wheel_RL', 'wheel_RR'].map(n => m.getObjectByName(n));
     this.rollers = ['roller_FL', 'roller_FR', 'roller_RL', 'roller_RR'].map(n => m.getObjectByName(n));
+    // 커스텀 세팅을 모델에 반영: 타이어 지름(바퀴 크기·차고), 롤러 지름
+    const sp = deriveSpec(kit || DEFAULT_KIT), wk = sp.tireMM / 26, rk = partOf(sp.kit, 'roller').mm / 11;
+    this.wk = wk;
+    [...this.wheelsF, ...this.wheelsR].forEach(w => w && w.scale.multiplyScalar(wk));
+    this.rollers.forEach(r => r && r.scale.set(r.scale.x * rk, r.scale.y, r.scale.z * rk));
+    m.position.y += (wk - 1) * 0.72;
+    this.rollers = this.rollers.filter(Boolean); this.wheelsF = this.wheelsF.filter(Boolean); this.wheelsR = this.wheelsR.filter(Boolean);
     this.latVis = 0; this.roll = 0; this.yaw = 0; this.spin = { x: 0, y: 0, z: 0 };
     // 바닥 접지 그림자 (차와 함께 움직이고 기울어짐)
     this.blob = new THREE.Mesh(new THREE.PlaneGeometry(6.6, 8.8), blobMat);
@@ -857,20 +872,30 @@ class CarVis {
   dispose() { scene.remove(this.group); scene.remove(this.marker); }
 }
 
+/* ---- 내 미니카 세팅 (커스텀 kit: 모터·기어·타이어·롤러·매스댐퍼·브레이크·바디) ---- */
 const _oldSetups = store.get('mini4wd.setups', null);
-let mySetup = store.get('mini4wd.mySetup', (_oldSetups && _oldSetups[0]) || { motor: 'hyper', tire: 'mid' });
-if (!MOTORS.some(x => x.id === mySetup.motor) || !TIRES.some(x => x.id === mySetup.tire)) mySetup = { motor: 'hyper', tire: 'mid' };
-function renderMyCar() {
-  const mo = MOTORS.find(x => x.id === mySetup.motor), ti = TIRES.find(x => x.id === mySetup.tire);
-  $('myCar').innerHTML = `<div class="hd"><span class="dot" style="background:${hexs(STYLES[0].main)}"></span>🙋 내 미니카</div>
-    <select data-k="motor">${MOTORS.map(x => `<option value="${x.id}" ${x.id === mySetup.motor ? 'selected' : ''}>모터: ${x.name} — ${x.desc}</option>`).join('')}</select>
-    <select data-k="tire">${TIRES.map(x => `<option value="${x.id}" ${x.id === mySetup.tire ? 'selected' : ''}>타이어: ${x.name}</option>`).join('')}</select>
-    <div class="st">최고속도 ≈ ${Math.round(mo.vmax * ti.mul * KMH)} km/h · 코너 한계 ≈ ${Math.round(vcrit(ti, 20) * KMH)}~${Math.round(vcrit(ti, 40) * KMH)} km/h</div>`;
-  $('myCar').querySelectorAll('select').forEach(sel => sel.onchange = () => {
-    mySetup[sel.dataset.k] = sel.value; store.set('mini4wd.mySetup', mySetup); renderMyCar();
-    if (V.code) backend.setMySetup(V.code, { motor: mySetup.motor, tire: mySetup.tire });
-  });
+let myKit = normalizeKit(store.get('mini4wd.kit', null) || store.get('mini4wd.mySetup', (_oldSetups && _oldSetups[0]) || DEFAULT_KIT));
+const myPayload = () => ({ motor: myKit.motor, tire: myKit.tire, kit: encodeKit(myKit) });
+function setMyKit(k) {
+  myKit = normalizeKit(k); store.set('mini4wd.kit', myKit); renderMyCar();
+  if (V.code) backend.setMySetup(V.code, myPayload());
+  toast('미니카 세팅을 적용했어요');
 }
+const garage = createGarage({
+  getKit: () => myKit,
+  onApply: setMyKit,
+  getCourse: () => (loop.valid ? { track: loop.track, name: V.screen === 'room' ? '이 방의 코스' : '현재 코스' } : null),
+});
+function renderMyCar() {
+  const sp = deriveSpec(myKit), P = k => partOf(myKit, k);
+  $('myCar').innerHTML = `<div class="hd"><span class="dot" style="background:${hexs(STYLES[0].main)}"></span>🙋 내 미니카<button class="btn blue mini" id="myCarEdit">🔧 커스텀</button></div>
+    <div class="kitline"><b>${P('motor').name}</b> · ${P('gear').name.split(' ')[0]} · ${P('tire').name} ${P('dia').mm}mm</div>
+    <div class="kitline">${P('roller').name} ×${P('rlay').n} · ${P('plate').name}</div>
+    <div class="kitline">${P('damper').id === 'none' ? '매스댐퍼 없음' : P('damper').name} · ${P('brake').id === 'none' ? '브레이크 없음' : P('brake').name}</div>
+    <div class="st">최고 ${(sp.vmax * KMH).toFixed(1)}km/h · 전폭 ${sp.width}mm · ${Math.round(sp.mass)}g</div>`;
+  $('myCarEdit').onclick = () => garage.open();
+}
+$('carSetup').onclick = () => garage.open();
 
 /* ====================================================================
  *  레이스
@@ -890,11 +915,11 @@ function startRace(opts) {
   if (!carModel || !loop.valid) return;
   if (opts && opts.roster) roomRoster = { list: opts.roster, laps: opts.laps };     // 경기종료 때까지 이번 경기의 참가자 목록 유지
   if (!roomRoster) return;
-  initAudio();
+  initAudio(); garage.close();
   roster = roomRoster.list; LAPS = LAPS_FIXED;
   if (!track) { track = loop.track; buildBuiltMesh(track); }
   vis.forEach(v => v.dispose()); vis = []; cars = [];
-  roster.forEach((r, i) => { const c = makeCar({ motor: r.motor, tire: r.tire }, LANES[r.lane], r.name, i); c.speedMul = r.speedMul; c.s = 0; c.laps = 0; cars.push(c); vis.push(new CarVis(STYLES[i])); });     // 출발선에서 시작 (GO 와 함께 초기 속도를 받는다)
+  roster.forEach((r, i) => { const kit = normalizeKit(r.kit || { motor: r.motor, tire: r.tire }), c = makeCar({ kit }, LANES[r.lane], r.name, i); c.speedMul = r.speedMul; c.s = 0; c.laps = 0; cars.push(c); vis.push(new CarVis(STYLES[i], kit)); });     // 출발선에서 시작 (GO 와 함께 초기 속도를 받는다)
   mode = 'countdown'; countT = (opts && opts.countT0) || 0; raceT = 0; simAcc = 0; lastCount = 4; finishAt = 0; resultShown = false; selCar = 0;
   $('editor').classList.add('hide'); $('home').classList.add('hide'); $('race').classList.remove('hide'); $('camMenu').classList.add('hide'); $('result').classList.add('hide'); $('toast').classList.add('hide');
   $('msg').textContent = ''; $('center').textContent = ''; syncView();
@@ -935,7 +960,7 @@ function poseCars(dt) {
     v.roll += ((c.scrape ? -c.scrapeSide * 0.08 : 0) - v.roll) * Math.min(1, 10 * dt);
     g.rotation.set(-pitch, v.yaw, v.roll);
     const dist = c.v * dt;
-    v.wheelsF.forEach(w => w.rotation.x -= dist / 0.66); v.wheelsR.forEach(w => w.rotation.x -= dist / 0.76);
+    v.wheelsF.forEach(w => w.rotation.x -= dist / (0.66 * v.wk)); v.wheelsR.forEach(w => w.rotation.x -= dist / (0.76 * v.wk));
     v.rollers.forEach(r => r.rotation.y += dist * 0.9);
     if (c.scrape && dt > 0) for (let k = 0; k < 2; k++) {
       const ox = p.x + nx * (lat + c.scrapeSide * 2.4), oz = p.z + nz * (lat + c.scrapeSide * 2.4);
@@ -951,6 +976,8 @@ function handleEvents(c, i) {
     else if (e.type === 'fall') { say(`${c.name} 점프 실패… 추락! 💥`, '#ff8d8d'); beep(140, .35, 'sawtooth', .12); }
     else if (e.type === 'wallhit') { beep(95, .12, 'square', .1); if (i === selCar) shake = Math.max(shake, 0.5); }
     else if (e.type === 'caught') { say(`${c.name} 벽에 걸렸다! 🧱`, '#ffd36b'); beep(180, .2, 'triangle', .1); }
+    else if (e.type === 'hop') { beep(420, .07, 'triangle', .07); if (i === selCar) shake = Math.max(shake, 0.25); }
+    else if (e.type === 'bounceout') { say(`${c.name} 착지에서 튕겨 나갔다! 💥`, '#ff8d8d'); beep(120, .4, 'sawtooth', .12); if (i === selCar) shake = 0.8; }
     else if (e.type === 'flyoff') { say(`${c.name} 코스 아웃! 💥`, '#ff8d8d'); beep(120, .4, 'sawtooth', .12); if (i === selCar) shake = 0.8; }
     else if (e.type === 'lap' && i === selCar && e.n < LAPS) say(`${c.name} LAP ${e.n} · ${fmt(e.time)}`, col);
     else if (e.type === 'finish') { say(`🏁 ${c.name} 골인!`, col); beep(880, .4, 'triangle', .14); if (!finishAt) finishAt = raceT; }
@@ -1121,6 +1148,7 @@ function startConfetti() {
  *  키보드
  * ==================================================================== */
 addEventListener('keydown', e => {
+  if (garage.isOpen()) { if (e.code === 'Escape') garage.close(); return; }
   if (modalOpen()) { if (e.code === 'Escape') closeModal(); return; }
   if (e.target && ['SELECT', 'INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
   if (mode === 'build') {
@@ -1285,12 +1313,11 @@ function renderRoomList(rows) {
   });
   $('roomList').querySelectorAll('[data-code]').forEach(b => b.onclick = async () => {
     bgmPlay();
-    try { enterRoom(await backend.joinRoom(b.dataset.code, { motor: mySetup.motor, tire: mySetup.tire }), 'guest'); } catch (e) { toast(e.message); }
+    try { enterRoom(await backend.joinRoom(b.dataset.code, myPayload()), 'guest'); } catch (e) { toast(e.message); }
   });
 }
 $('nick').value = backend.userSync().name;
 $('nick').onchange = async () => { const u = await backend.setName($('nick').value); $('nick').value = u.name; };
-$('carSetup').title = '준비 중이에요';
 /** 방 만들기: 방 제목을 입력받는 팝업 → 확인하면 방을 만들고 입장 */
 function showCreateRoom() {
   const u = backend.userSync(), def = `${u.name}의 방`;
@@ -1301,7 +1328,7 @@ function showCreateRoom() {
   const input = $('rtInput'); input.focus();
   const go = async () => {
     $('rtOk').disabled = true;
-    try { const s = await backend.createRoom({ title: input.value.trim() || def, laps: LAPS_FIXED, motor: mySetup.motor, tire: mySetup.tire }); closeModal(); enterRoom(s, 'host'); }
+    try { const s = await backend.createRoom({ title: input.value.trim() || def, laps: LAPS_FIXED, ...myPayload() }); closeModal(); enterRoom(s, 'host'); }
     catch (e) { $('rtErr').textContent = e.message; $('rtOk').disabled = false; }
   };
   $('rtOk').onclick = go; $('rtCancel').onclick = closeModal;
@@ -1371,12 +1398,13 @@ async function hostStart(ai) {
 /** 방 스냅샷 → 참가자 목록. 모든 접속자가 같은 snap(seed)으로 만들므로 AI 도 동일하게 나온다. */
 function rosterFromRoom(snap) {
   const me = backend.userSync().uid, r = rng(snap.seed), used = new Set(snap.players.map(p => p.lane));
-  const players = snap.players.map(p => ({ name: p.name, motor: p.motor, tire: p.tire, lane: p.lane, speedMul: 1, uid: p.uid }));
+  const players = snap.players.map(p => ({ name: p.name, motor: p.motor, tire: p.tire, kit: p.kit || null, lane: p.lane, speedMul: 1, uid: p.uid }));
   if (snap.fillAI) {                 // 혼자 + "AI와 하기" 일 때만 빈 레인을 AI 가 채운다
     const ai = ['AI 레드', 'AI 그린']; let k = 0;
     for (const lane of [0, 1, 2]) {
       if (used.has(lane)) continue;
-      players.push({ name: ai[k++], motor: MOTORS[Math.floor(r() * MOTORS.length)].id, tire: TIRES[Math.floor(r() * TIRES.length)].id, lane, speedMul: 0.97 + r() * 0.03 });
+      const kit = normalizeKit(KIT_PRESETS[1 + Math.floor(r() * (KIT_PRESETS.length - 1))].kit);      // AI 는 추천 세팅 중 하나 (키트 기본 제외)
+      players.push({ name: ai[k++], motor: kit.motor, tire: kit.tire, kit, lane, speedMul: 0.97 + r() * 0.03 });
     }
   }
   players.sort((a, b) => (b.uid === me) - (a.uid === me) || a.lane - b.lane);   // 나를 0번(파란 차)으로
@@ -1395,7 +1423,7 @@ function loadSeq(seq, save) {
 }
 /** 테스트/바로가기용: 홈을 건너뛰고 방을 만들어 혼자(또는 AI와) 바로 시작 */
 async function quickStart(ai) {
-  const s = await backend.createRoom({ laps: LAPS_FIXED, motor: mySetup.motor, tire: mySetup.tire });
+  const s = await backend.createRoom({ laps: LAPS_FIXED, ...myPayload() });
   enterRoom(s, 'host'); await hostStart(ai);
 }
 
@@ -1432,7 +1460,7 @@ function frame(now) {
       bridgeMat.opacity += ((under ? 0.32 : 1) - bridgeMat.opacity) * Math.min(1, 6 * dt); bridgeMat.depthWrite = bridgeMat.opacity > 0.97; }
     if (msgT > 0) { msgT -= dt; if (msgT <= 0) $('msg').textContent = ''; }
     standTimer -= dt; if (standTimer <= 0) { updateStandings(); standTimer = 0.1; }
-    const sc = cars[selCar]; $('spdV').textContent = Math.round(sc.v * KMH); $('spdName').textContent = `${sc.name} · ${MOTORS.find(m => m.id === roster[selCar].motor).name}`;
+    const sc = cars[selCar]; $('spdV').textContent = Math.round(sc.v * KMH); $('spdName').textContent = `${sc.name} · ${sc.motor.name}`;
     const g = vis[selCar].group.position;
     if (camMode === 2) {
       sun.position.set(controls.target.x + 60, 140, controls.target.z + 40); sun.target.position.copy(controls.target);

@@ -35,7 +35,7 @@ export function courseKey(seq) {
   return 'c' + hash(best || '').toString(36);
 }
 
-const MOTOR_IDS = ['torque', 'hyper', 'atomic', 'mach'], TIRE_IDS = ['soft', 'mid', 'hard'];
+const MOTOR_IDS = ['torque', 'hyper', 'power', 'atomic', 'mach'], TIRE_IDS = ['soft', 'mid', 'hard'];
 /** 「우리는 챔피언」(SBS 더빙판) 캐릭터 이름 — 닉네임 / 가짜 참여자 이름으로 사용 */
 export const CHAMP_NAMES = ['남궁열', '남궁호', '독고진', '독고민', '나원승', '나치티', '공진수'];
 const FAKE_NAMES = CHAMP_NAMES;
@@ -61,7 +61,7 @@ function ensureSeeded(db, ck, laps, hint) {
   const base = hint || 40 * laps;
   for (let i = 0; i < 9; i++) {
     const time = base * (0.93 + i * 0.04 + r() * 0.03);
-    list.push({ uid: 'bot' + i, name: FAKE_NAMES[(hash(k) + i * 5) % FAKE_NAMES.length] + (i % 3 ? '' : '💨'), time, best: time / laps * (0.96 + r() * 0.03), motor: MOTOR_IDS[Math.floor(r() * 4)], tire: TIRE_IDS[Math.floor(r() * 3)], at: Date.now() - Math.floor(r() * 20) * 86400000, bot: true });
+    list.push({ uid: 'bot' + i, name: FAKE_NAMES[(hash(k) + i * 5) % FAKE_NAMES.length] + (i % 3 ? '' : '💨'), time, best: time / laps * (0.96 + r() * 0.03), motor: MOTOR_IDS[Math.floor(r() * MOTOR_IDS.length)], tire: TIRE_IDS[Math.floor(r() * 3)], at: Date.now() - Math.floor(r() * 20) * 86400000, bot: true });
   }
   db[k] = list;
 }
@@ -91,7 +91,7 @@ const makeCode = () => { const A = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; let c = ''
 function botPlayer(room) {
   const used = new Set(room.players.map(p => p.name)), pool = FAKE_NAMES.filter(n => !used.has(n));
   const r = Math.random;
-  return { uid: 'bot' + Math.random().toString(36).slice(2, 7), name: pool[Math.floor(r() * pool.length)], motor: MOTOR_IDS[Math.floor(r() * 4)], tire: TIRE_IDS[Math.floor(r() * 3)], lane: 0, bot: true };
+  return { uid: 'bot' + Math.random().toString(36).slice(2, 7), name: pool[Math.floor(r() * pool.length)], motor: MOTOR_IDS[Math.floor(r() * MOTOR_IDS.length)], tire: TIRE_IDS[Math.floor(r() * 3)], lane: 0, bot: true };
 }
 function addPlayer(h, p) {
   if (h.room.players.length >= 3) return false;
@@ -160,20 +160,20 @@ const dummy = {
   subscribeRoomList(cb) { listSubs.add(cb); setTimeout(() => listSubs.has(cb) && cb(listSync()), 120); return () => listSubs.delete(cb); },
 
   /* ---- 방 ---- */
-  async createRoom({ title, laps, motor, tire }) {
+  async createRoom({ title, laps, motor, tire, kit }) {
     const u = loadUser(); let code; do { code = makeCode(); } while (rooms.has(code));
     const h = { subs: new Set(), timers: [], fake: false, armed: false, room: { code, title: (String(title || '').trim().slice(0, 20)) || (u.name + '의 방'), hostUid: u.uid, seq: null, laps, status: 'lobby', startAt: 0, seed: 0, fillAI: false, players: [], spectators: [] } };
-    rooms.set(code, h); addPlayer(h, { uid: u.uid, name: u.name, motor, tire, lane: 0, bot: false });
+    rooms.set(code, h); addPlayer(h, { uid: u.uid, name: u.name, motor, tire, kit, lane: 0, bot: false });
     // 더미: 방장이 코스를 만드는 동안 가짜 참여자가 한참 뒤에 한 명씩 들어온다 (그 전에 시작하면 혼자하기/AI와하기)
     [20000, 45000].forEach(ms => h.timers.push(setTimeout(() => { if (h.room.status === 'lobby' && rooms.get(code) === h) addPlayer(h, botPlayer(h.room)); }, ms)));
     return wait(snap(h.room), 200);
   },
-  async joinRoom(code, { motor, tire }) {
+  async joinRoom(code, { motor, tire, kit }) {
     const u = loadUser(); seedFakeRooms();
     const h = rooms.get(String(code).toUpperCase());
     if (!h) throw new Error('사라진 방이에요.');
     if (h.room.status !== 'lobby') throw new Error('이미 시작된 방이에요.');
-    if (!h.room.players.some(p => p.uid === u.uid)) { if (!addPlayer(h, { uid: u.uid, name: u.name, motor, tire, lane: 0, bot: false })) throw new Error('방이 가득 찼어요 (최대 3명).'); }
+    if (!h.room.players.some(p => p.uid === u.uid)) { if (!addPlayer(h, { uid: u.uid, name: u.name, motor, tire, kit, lane: 0, bot: false })) throw new Error('방이 가득 찼어요 (최대 3명).'); }
     armFakeStart(h);
     return wait(snap(h.room), 200);
   },
@@ -194,9 +194,9 @@ const dummy = {
   },
   setRoomCourse(code, seq) { const h = rooms.get(code); if (h && h.room.hostUid === loadUser().uid) { h.room.seq = seq ? seq.slice() : null; notify(h); } return wait(true, 20); },
   setRoomLaps(code, laps) { const h = rooms.get(code); if (h && h.room.hostUid === loadUser().uid) { h.room.laps = laps; notify(h); } return wait(true, 20); },
-  setMySetup(code, { motor, tire }) {
+  setMySetup(code, { motor, tire, kit }) {
     const h = rooms.get(code), u = loadUser(); if (!h || h.room.status !== 'lobby') return wait(false, 30);
-    const p = h.room.players.find(q => q.uid === u.uid); if (p) { p.motor = motor; p.tire = tire; notify(h); }
+    const p = h.room.players.find(q => q.uid === u.uid); if (p) { p.motor = motor; p.tire = tire; p.kit = kit; notify(h); }
     return wait(true, 30);
   },
   /** 방장만. opts.ai: 혼자일 때 AI와 함께할지 (참여자가 있으면 무시) */

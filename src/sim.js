@@ -1,23 +1,16 @@
 // 미니4WD 자동 주행 시뮬레이션 (three.js 의존 없음). 운전 없음: 모터 + 세팅 + 코스가 결과를 결정한다.
 import { sampleAt, groundH, findIndex, JUMP, ROAD_HALF } from './track.js';
+import { MOTORS, TIRES, WALL_G, REST_BASE, deriveSpec } from './parts.js';
 
-/* 모터 등급이 올라갈수록 최고속도와 가속이 함께 크게 오른다 (등급 간 3랩 기록이 눈에 띄게 벌어지도록 조정).
- * 빠른 모터는 코너 한계(타이어 그립)를 넘기 쉬워서 코스아웃 위험도 같이 커진다. 점프는 진입 속도 약 40 이상 필요. */
-export const MOTORS = [
-  { id: 'torque', name: '토크 튠',   vmax: 44, acc: 22, desc: '느리지만 안정적' },
-  { id: 'hyper',  name: '하이퍼 대시', vmax: 56, acc: 30, desc: '균형형' },
-  { id: 'atomic', name: '아토믹 튠',  vmax: 70, acc: 40, desc: '빠름 — 코너 주의' },
-  { id: 'mach',   name: '마하 대시',  vmax: 90, acc: 54, desc: '최고속 — 코스아웃 위험' },
-];
-export const TIRES = [
-  { id: 'soft', name: '소프트 (그립↑)', grip: 190, mul: 0.96 },
-  { id: 'mid',  name: '미디엄',         grip: 135, mul: 0.985 },
-  { id: 'hard', name: '하드 (그립↓)',   grip: 90, mul: 1.0 },
-];
+/* 모터·타이어 표와 세팅 → 성능 계산은 parts.js (미니카 커스텀) */
+export { MOTORS, TIRES };
 
 export const G = 40;
-const FLY_OFF = 1.3;       // 코너 한계속도의 몇 배부터 코스 아웃
 const RESPAWN_T = 1.9;
+export const BOUNCE_OUT = 9;   // 착지 후 튀어 오르는 속도가 이 이상이면 벽을 넘어 코스아웃
+const BOUNCE_HOP = 3.2;        // 이 이상이면 한 번 더 통통 튄다 (속도 손실)
+const BRAKE_SLOPE = 0.02;
+const WAVE_LOSS = 0.5;         // 웨이브 구간 감속 (착지 반발이 작을수록 = 매스댐퍼가 좋을수록 덜 흔들려 덜 느려진다)      // 이보다 기울어진 경사(오르막·내리막·점프대)에서 브레이크 스펀지가 노면에 닿는다
 
 /* ---- 코스아웃 시 충돌 물리 ----
  * 트랙 기준 좌표(lat: 중심선에서 좌우 거리, h: 노면 높이)로 벽/칸막이/노면과 충돌한다.
@@ -132,17 +125,18 @@ export function laneLiftAt(car, tr, s) {
  *  모터 최고속도의 60% 이하, 출발 직후가 코너면 그 코너 한계속도의 90% 이하로 제한한다. */
 export const V_LAUNCH = 20;
 export function launchSpeed(car, tr) {
-  const info = sampleAt(tr, car.s), vmaxE = car.motor.vmax * car.tire.mul * (car.speedMul || 1);
+  const info = sampleAt(tr, car.s), vmaxE = car.spec.vmax * (car.speedMul || 1);
   let v = Math.min(V_LAUNCH, vmaxE * 0.6);
   if (info.R > 0) v = Math.min(v, vcrit(car.tire, Math.max(8, info.R - info.sign * laneLatAt(car, tr, car.s))) * 0.9);
   return v;
 }
 
+/** setup: 커스텀 세팅(kit 객체/문자열) 또는 예전 { motor, tire }. 성능은 deriveSpec 이 부품 조합으로 계산한다 */
 export function makeCar(setup, lane, name, colorIdx) {
+  const spec = deriveSpec((setup && setup.kit) || setup);
   return {
     name, colorIdx, lane, laneIdx0: Math.max(0, LANE_LAT.indexOf(lane)),
-    motor: MOTORS.find(m => m.id === setup.motor) || MOTORS[1],
-    tire: TIRES.find(t => t.id === setup.tire) || TIRES[1],
+    spec, motor: spec.motor, tire: spec.tire, bounces: 0,
     s: 0, v: 0, y: 0, vy: 0, state: 'ground', crashT: 0, invul: 0,
     laps: 0, finished: false, finishTime: null, lapStart: 0, lapTimes: [], bestLap: null,
     crashes: 0, scrape: false, events: [],
@@ -152,7 +146,7 @@ export function makeCar(setup, lane, name, colorIdx) {
   };
 }
 
-function startCrash(car, tr, kind, info) {
+function startCrash(car, tr, kind, bounceV) {
   const p = sampleAt(tr, car.s);
   // 레인 오프셋 반영
   const nx = p.tz, nz = -p.tx; // 왼쪽 법선
@@ -165,11 +159,15 @@ function startCrash(car, tr, kind, info) {
   if (kind === 'flyoff') {
     // 관성대로 진행 방향(접선)으로 날아간다. 코너가 휘어 있으니 자연히 바깥 벽쪽으로 향한다.
     c.vx = p.tx * car.v * 0.97; c.vz = p.tz * car.v * 0.97; c.vy = 2.2;
+  } else if (kind === 'bounce') {
+    // 착지에서 크게 튀어 비스듬히 벽 밖으로 (진행 방향 왼쪽/오른쪽은 레인 위치로 정해 모든 접속자에서 같게)
+    const side = lat0 >= 0 ? 1 : -1;
+    c.vx = p.tx * car.v * 0.8 + nx * side * 9; c.vz = p.tz * car.v * 0.8 + nz * side * 9; c.vy = bounceV;
   } else { // 'gap' 추락
     c.vx = p.tx * car.v * 0.4; c.vz = p.tz * car.v * 0.4; c.vy = Math.min(car.vy, 0);
   }
   c.rx = (Math.random() - .5) * 9; c.rz = (Math.random() - .5) * 9; c.ry = (Math.random() - .5) * 6;
-  car.events.push({ type: kind === 'flyoff' ? 'flyoff' : 'fall' });
+  car.events.push({ type: kind === 'flyoff' ? 'flyoff' : kind === 'bounce' ? 'bounceout' : 'fall' });
   car.v = 0;
 }
 
@@ -195,25 +193,36 @@ export function stepCar(car, tr, dt, raceT, laps) {
     const g = groundH(tr, car.s);
     if (!isNaN(g) && car.y <= g) {
       if (car.y < g - 0.5) { startCrash(car, tr, 'gap'); return; }
-      car.y = g; car.state = 'ground'; car.v *= 0.93; car.events.push({ type: 'land', speed: car.v });
+      // 착지 충격 = 노면에 수직으로 부딪히는 속도. 착지대 경사 위에 내리면 부드럽고, 착지대를 넘겨 평지에 떨어지면 세다.
+      // 반발(rest)만큼 다시 튀어 오르고, 너무 높이 튀면 벽을 넘어 코스아웃. 매스댐퍼가 반발을 줄인다.
+      const gs = sampleAt(tr, car.s).slope, imp = Math.max(0, car.v * gs - car.vy), b = imp * car.spec.rest;
+      car.y = g; car.v *= 0.93;
+      if (car.invul <= 0 && b > BOUNCE_OUT) { car.bounces++; startCrash(car, tr, 'bounce', b); return; }
+      if (b > BOUNCE_HOP) { car.vy = b + car.v * gs; car.y = g + 0.01; car.events.push({ type: 'hop', speed: b }); return; }      // 통통 튀고 다시 착지
+      car.state = 'ground'; car.events.push({ type: 'land', speed: car.v });
     } else if (car.y < -8) startCrash(car, tr, 'gap');
     return;
   }
 
   // ---- ground
-  const info = sampleAt(tr, car.s), m = car.motor, vmaxE = m.vmax * car.tire.mul * (car.speedMul || 1);
+  const info = sampleAt(tr, car.s), sp = car.spec, vmaxE = sp.vmax * (car.speedMul || 1);
   let ds = 1;                                   // 레인에 따른 중심선 진행 비율
   let acc;
-  if (car.v < vmaxE) acc = m.acc * (1 - car.v / vmaxE); else acc = -(car.v - vmaxE) * 1.5;
+  if (car.v < vmaxE) acc = sp.acc * (1 - car.v / vmaxE); else acc = -(car.v - vmaxE) * 1.5;
   acc -= 25 * (info.slope + laneLiftAt(car, tr, car.s).slope);     // 고가 구간의 오르내림도 속도에 영향
   if (tr.seq[info.piece] === 'lane') acc -= 4;       // 레인체인지 구간에서는 옆으로 옮겨 가느라 조금 느려진다
+  if (tr.seq[info.piece] === 'wave') acc -= car.v * WAVE_LOSS * (sp.rest / REST_BASE);
   if (info.brake && car.v > 14) acc -= car.v * 1.1;
+  // 브레이크 스펀지: 내리막과 점프대(차가 앞으로 기울거나 들리는 곳)에서 노면에 끌려 속도를 줄인다
+  car.braking = sp.brakeK > 0 && (info.slope < -BRAKE_SLOPE || (info.slope > BRAKE_SLOPE && tr.seq[info.piece] === 'jump'));
+  if (car.braking) acc -= sp.brakeK * car.v;
   if (info.R > 0) {
     // 내 레인의 실제 반경: 안쪽 레인은 짧지만 한계속도가 낮고, 바깥 레인은 멀리 돌지만 더 빨리 돌 수 있다
     const Rc = Math.max(8, info.R - info.sign * laneLatAt(car, tr, car.s)), vc = vcrit(car.tire, Rc);
     ds = info.R / Rc;
-    if (car.invul <= 0 && car.v > vc * FLY_OFF) { startCrash(car, tr, 'flyoff'); return; }
-    if (car.v > vc) { acc -= (car.v - vc) * 3; car.scrape = true; car.scrapeSide = -info.sign; }
+    // 타이어 한계(vc)를 넘으면 롤러가 바깥 벽을 타고 돈다: 롤러 마찰만큼 감속, 롤러 세팅이 버틸 수 있는 한계(hold)를 넘으면 코스아웃
+    if (car.invul <= 0 && car.v > Math.sqrt(WALL_G * Rc) * sp.hold) { startCrash(car, tr, 'flyoff'); return; }
+    if (car.v > vc) { acc -= (car.v - vc) * sp.fric; car.scrape = true; car.scrapeSide = -info.sign; ds = info.R / Math.max(8, Rc - sp.wideIn); }
   }
   car.v = Math.max(0, car.v + acc * dt);
   if (car.v > car.maxV) car.maxV = car.v;
