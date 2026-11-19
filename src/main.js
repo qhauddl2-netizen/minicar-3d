@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { PIECES, PRESETS, PRESET_LEVEL, ROAD_HALF, K, FLIP, buildTrack, sampleAt } from './track.js';
+import { PIECES, PRESETS, PRESET_LEVEL, ROAD_HALF, K, FLIP, buildTrack, sampleAt, waveSlope } from './track.js';
 import { mod8, rot, pinfo, endPos, worldPts, collides, neighborsOf, openConns, allConns, match, poseForAttach, traverse, newId, setIdBase, layoutFromSeq } from './layout.js';
 import { TIME_SCALE, CRASH_TIME, MOTORS, TIRES, makeCar, stepCar, vcrit, launchSpeed, laneLatAt, laneLiftAt, laneGroundE, laneBridgeE, laneBridgeLift, LANE_LAT, BRIDGE_H } from './sim.js';
 import { backend, courseKey, rng, setSeedCourses, FIXED_ROOM } from './backend.js';
@@ -448,7 +448,7 @@ const flatCache = {};
 function flatGeo(type) {
   if (flatCache[type]) return flatCache[type];
   const tr = buildTrack([type]);
-  if (!(type === 'up' || type === 'down' || type === 'jump' || type === 'wave')) { tr.H = tr.H.map(h => (isNaN(h) ? NaN : 0)); tr.end = { ...tr.end, h: 0 }; }     // 경사 부품만 편집 중에도 경사로 그린다 (기준 높이는 그룹 위치로)
+  if (!(type === 'up' || type === 'down' || type === 'jump')) { tr.H = tr.H.map(h => (isNaN(h) ? NaN : 0)); tr.end = { ...tr.end, h: 0 }; }     // 경사 부품만 편집 중에도 경사로 그린다 (기준 높이는 그룹 위치로)
   return (flatCache[type] = {
     samp: { n: tr.n, X: tr.X, Z: tr.Z, DX: tr.DX, DZ: tr.DZ, H: tr.H.slice() },
     road: buildStrip(tr, [{ lat: ROAD_HALF, y: 0.03, u: 0 }, { lat: -ROAD_HALF, y: 0.03, u: 1 }], false, 16, true),
@@ -1094,7 +1094,9 @@ function poseCars(dt) {
     v.latVis += ((c.scrape ? c.scrapeSide * 0.7 : 0) - v.latVis) * Math.min(1, 8 * dt);
     const lat = laneLatAt(c, track, c.s) + v.latVis, nx = p.tz, nz = -p.tx;
     g.position.set(p.x + nx * lat, (isNaN(c.y) ? 0 : c.y) + 0.03, p.z + nz * lat);
-    v.yaw = Math.atan2(p.tx, p.tz); v.spin = { x: 0, y: 0, z: 0 };
+    if (track.seq[p.piece] === 'wave') { const k = waveSlope(p.s - track.pieceStart[p.piece], PIECES.wave.len); v.yaw = Math.atan2(p.tx - p.tz * k, p.tz + p.tx * k); }   // 웨이브: 물결 따라 차 머리도 좌우로
+    else v.yaw = Math.atan2(p.tx, p.tz);
+    v.spin = { x: 0, y: 0, z: 0 };
     const pitch = c.state === 'air' ? Math.atan2(c.vy, Math.max(1, c.v)) : Math.atan(p.slope + laneLiftAt(c, track, c.s).slope);
     v.roll += ((c.scrape ? -c.scrapeSide * 0.08 : 0) - v.roll) * Math.min(1, 10 * dt);
     g.rotation.set(-pitch, v.yaw, v.roll);

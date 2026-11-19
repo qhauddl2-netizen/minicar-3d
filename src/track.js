@@ -20,14 +20,18 @@ export const PIECES = {
   jump:     { label: '점프',        len: 60 },
   brake:    { label: '브레이크',    len: 20 },
   lane:     { label: '레인체인지',  len: 40 },     // 지나면 한 칸 옆 레인으로 이동 (1→2→3→1)
-  wave:     { label: '웨이브',      len: 20 },     // 노면이 물결처럼 오르내린다: 차가 흔들려 감속 (매스댐퍼가 줄여 줌)
+  wave:     { label: '웨이브',      len: 20 },     // 코스가 좌우로 S자처럼 물결친다: 롤러가 양쪽 벽을 번갈아 문질러 감속 (롤러 마찰이 작을수록 덜 느려짐)
 };
 // 부품을 반대 방향으로 지날 때의 형태 (jump 는 방향성이 있어 null)
 export const REVERSE = { straight: 'straight', half: 'half', c45R: 'c45L', c45L: 'c45R', c90R: 'c90L', c90L: 'c90R', b90R: 'b90L', b90L: 'b90R', up: 'down', down: 'up', brake: 'brake', lane: 'lane', wave: 'wave', jump: null };
 export const FLIP = { c45R: 'c45L', c45L: 'c45R', c90R: 'c90L', c90L: 'c90R', b90R: 'b90L', b90L: 'b90R' };
 
 export const JUMP = { rampEnd: 20, gapEnd: 31, height: 3, len: 60 };
-export const WAVE = { amp: 0.7, humps: 2 };
+export const WAVE = { amp: 1.1 };      // 좌우 흔들림 크기 (최대 약 ±1.4 = 3.9cm)
+/** 웨이브 중심선의 옆 이동량 (t: 0~1). 양 끝에서 위치·기울기가 0 → 앞뒤 부품과 매끄럽게 이어진다. 왼→오른 S자 */
+const waveOff = t => WAVE.amp * (Math.sin(2 * Math.PI * t) - 0.5 * Math.sin(4 * Math.PI * t));
+/** 웨이브 구간에서 차가 실제로 향하는 방향의 기울기 (d옆이동 / d진행). 차 모델을 물결 따라 틀어 줄 때 쓴다 */
+export const waveSlope = (u, len) => WAVE.amp * 2 * Math.PI * (Math.cos(2 * Math.PI * u / len) - Math.cos(4 * Math.PI * u / len)) / len;
 
 function heightAt(type, u, len, h0) {
   const def = PIECES[type];
@@ -37,7 +41,6 @@ function heightAt(type, u, len, h0) {
     if (u < JUMP.gapEnd - 1e-6) return NaN;
     return h0 + JUMP.height * (1 - (u - JUMP.gapEnd) / (JUMP.len - JUMP.gapEnd));
   }
-  if (type === 'wave') return h0 + WAVE.amp * 0.5 * (1 - Math.cos(2 * Math.PI * WAVE.humps * Math.min(1, u / len)));
   return h0;
 }
 
@@ -45,7 +48,7 @@ function heightAt(type, u, len, h0) {
 export function stepPiece(type, x, z, a, h) {
   const def = PIECES[type], curve = !!def.R;
   const len = curve ? def.R * def.ang : def.len;
-  const n = Math.max(1, Math.round(len / STEP));
+  const n = Math.max(1, Math.round(len / (type === 'wave' ? STEP / 4 : STEP)));     // 웨이브는 곡선이 촘촘해서 잘게 나눈다
   const dx = Math.cos(a), dz = Math.sin(a);
   const nrm = def.sign > 0 ? [Math.sin(a), -Math.cos(a)] : [-Math.sin(a), Math.cos(a)];
   const samples = [];
@@ -56,6 +59,9 @@ export function stepPiece(type, x, z, a, h) {
       const phi = u / def.R, sn = Math.sin(phi), cs = Math.cos(phi);
       px = x + def.R * (sn * dx + (1 - cs) * nrm[0]); pz = z + def.R * (sn * dz + (1 - cs) * nrm[1]);
       tx = cs * dx + sn * nrm[0]; tz = cs * dz + sn * nrm[1];
+    } else if (type === 'wave') {              // 좌우 S자: 단면은 진행 방향에 수직 그대로 두고 옆(nrm)으로 밀기만 한다 → 벽·노면이 접히지 않는다
+      const o = waveOff(u / len);
+      px = x + dx * u + nrm[0] * o; pz = z + dz * u + nrm[1] * o; tx = dx; tz = dz;
     } else { px = x + dx * u; pz = z + dz * u; tx = dx; tz = dz; }
     samples.push({ x: px, z: pz, h: heightAt(type, u, len, h), tx, tz, R: curve ? def.R : 0, sign: curve ? def.sign : 0, br: type === 'brake' ? 1 : 0, u });
   }

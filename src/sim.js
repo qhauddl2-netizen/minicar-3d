@@ -1,6 +1,6 @@
 // 미니4WD 자동 주행 시뮬레이션 (three.js 의존 없음). 운전 없음: 모터 + 세팅 + 코스가 결과를 결정한다.
 import { sampleAt, groundH, findIndex, JUMP, ROAD_HALF } from './track.js';
-import { MOTORS, TIRES, WALL_G, REST_BASE, deriveSpec } from './parts.js';
+import { MOTORS, TIRES, WALL_G, deriveSpec } from './parts.js';
 
 /* 모터·타이어 표와 세팅 → 성능 계산은 parts.js (미니카 커스텀) */
 export { MOTORS, TIRES };
@@ -16,7 +16,7 @@ export const BOUNCE_OUT = 9;   // 착지 후 튀어 오르는 속도가 이 이�
 const JUMP_KICK_MAX = 10;      // 점프대가 더해 줄 수 있는 최대 수직 속도 (v≈24 이하면 못 넘음)
 const BOUNCE_HOP = 3.2;        // 이 이상이면 한 번 더 통통 튄다 (속도 손실)
 const BRAKE_SLOPE = 0.02;
-const WAVE_LOSS = 0.5;         // 웨이브 구간 감속 (착지 반발이 작을수록 = 매스댐퍼가 좋을수록 덜 흔들려 덜 느려진다)      // 이보다 기울어진 경사(오르막·내리막·점프대)에서 브레이크 스펀지가 노면에 닿는다
+const WAVE_LOSS = 0.5;         // 웨이브(좌우 S자) 구간 감속: 롤러가 양쪽 벽을 번갈아 문지른다 (롤러 마찰이 작을수록 = 베어링 롤러일수록 덜 느려진다)      // 이보다 기울어진 경사(오르막·내리막·점프대)에서 브레이크 스펀지가 노면에 닿는다
 
 /* ---- 코스아웃 시 충돌 물리 ----
  * 트랙 기준 좌표(lat: 중심선에서 좌우 거리, h: 노면 높이)로 벽/칸막이/노면과 충돌한다.
@@ -228,7 +228,7 @@ export function stepCar(car, tr, dt, raceT, laps) {
   if (car.v < vmaxE) acc = sp.acc * (1 - car.v / vmaxE); else acc = -(car.v - vmaxE) * 1.5;
   acc -= 25 * (info.slope + laneLiftAt(car, tr, car.s).slope);     // 고가 구간의 오르내림도 속도에 영향
   if (tr.seq[info.piece] === 'lane') acc -= 4;       // 레인체인지 구간에서는 옆으로 옮겨 가느라 조금 느려진다
-  if (tr.seq[info.piece] === 'wave') acc -= car.v * WAVE_LOSS * (sp.rest / REST_BASE);
+  if (tr.seq[info.piece] === 'wave') acc -= car.v * WAVE_LOSS * (sp.fric / 3);       // 3 = 키트 기본(9mm 플라스틱 롤러 4개)
   if (info.brake && car.v > 14) acc -= car.v * 1.1;
   // 브레이크 스펀지: 내리막과 점프대(차가 앞으로 기울거나 들리는 곳)에서 노면에 끌려 속도를 줄인다
   car.braking = sp.brakeK > 0 && (info.slope < -BRAKE_SLOPE || (info.slope > BRAKE_SLOPE && tr.seq[info.piece] === 'jump'));
