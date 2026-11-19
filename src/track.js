@@ -119,8 +119,8 @@ export const PRESETS = {
   '헤어핀':        twice([S, S, LC, S, S, L, R, S, S, L, L, L, L, S, R, L]),
   '챔피언 서킷':   twice([S, S, LC, S, U, L, L, L, J, R, D, S, L, R, L, L]),
   /* 2026년 윈터컵: Pimentoso 트랙 에디터 코스(BFFEML)를 부품 연결점으로 순서를 복원해 옮긴 것.
-   * 8자 코스 — 오르막 2개로 올라간 고가 구간이 아래 코스를 넘어간다. 레인체인저(162cm)=레인체인지+직선, 뱅크 연결부(28cm)=반 직선, 웨이브 5개 */
-  '2026년 윈터컵 코스': [S, R, R, R, R, LC, S, S, W, HF, R, R, R, R, HF, L, L, L, L, R, R, U, S, S, S, R, R, U, D, D, S, S, W, R, R, R, R, LC, S, S, L, L, W, L, L, U, S, S, S, W, L, L, L, L, U, D, S, S, L, L, S, D, S, L, L, S],
+   * 8자 코스 — 오르막 1단(높이 5)으로 올라간 고가 구간이 아래 코스를 넘어간다. 레인체인저(162cm)=레인체인지+직선, 뱅크 연결부(28cm)=반 직선, 웨이브 5개 */
+  '2026년 윈터컵 코스': [S, R, R, R, R, LC, S, S, W, HF, R, R, R, R, HF, L, L, L, L, R, R, U, S, S, S, R, R, S, S, D, S, S, W, R, R, R, R, LC, S, S, L, L, W, L, L, U, S, S, S, W, L, L, L, L, S, S, S, S, L, L, S, D, S, L, L, S],
 };
 // 난이도(★ 개수): 시뮬레이션에서 모터·타이어 12조합이 낸 평균 코스아웃 수를 기준으로 정함
 export const PRESET_LEVEL = { '입문 오벌': 1, '점프 서킷': 2, '슬로프 챌린지': 2, '지그재그': 3, '헤어핀': 4, '챔피언 서킷': 5, '2026년 윈터컵 코스': 5 };
