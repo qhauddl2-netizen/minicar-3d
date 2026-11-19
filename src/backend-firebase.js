@@ -9,6 +9,8 @@
  *    rooms/{code}/players/{lane} 레인이 곧 자리: {uid, name, motor, tire}  (최대 3자리)
  *    rooms/{code}/spectators/{uid} = true
  *  방장/참가자 접속이 끊기면 onDisconnect 로 자동 정리한다 (서버 함수 없이 유령 방 방지).
+ *  고정 방(FIXED_ROOM): 지워지지 않는다. 방장이 자리에 없으면 남은 참가자(또는 새로 들어온 사람)가
+ *  meta/hostUid 를 트랜잭션으로 가져간다 (규칙에서 '방장이 자리에 없을 때만' 허용).
  *  보안 규칙: database.rules.json
  * ==================================================================== */
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
@@ -78,7 +80,8 @@ function buildRanking(app, dummy, { loadUser }) {
 }
 
 /* ---------------------------------------------------------------- 방 (Realtime Database) */
-async function buildRooms(app, dummy, { loadUser, LANE_ORDER }) {
+async function buildRooms(app, dummy, { loadUser, LANE_ORDER, FIXED_ROOM }) {
+  const FX = FIXED_ROOM.code;
   const db = getDatabase(app);
   /* 서버 시각 보정: 서버시각 ≈ Date.now() + offset */
   let offset = 0;
@@ -120,20 +123,48 @@ async function buildRooms(app, dummy, { loadUser, LANE_ORDER }) {
     return -1;
   }
 
+  /* ---- 고정 방 ---- */
+  /** 고정 방이 아직 없으면 만든다 (처음 들어온 사람이 방장) */
+  async function ensureFixed() {
+    const m = (await get(ref(db, `rooms/${FX}/meta`))).val();
+    if (m) return m;
+    const u = me(), created = srvNow();
+    const meta = { title: FIXED_ROOM.title, night: false, fixed: true, hostUid: u.uid, laps: FIXED_ROOM.laps, status: 'lobby', startAt: 0, seed: 0, fillAI: false, created };
+    await update(ref(db), { [`rooms/${FX}/meta`]: meta, [`roomList/${FX}`]: { code: FX, title: FIXED_ROOM.title, fixed: true, hostUid: u.uid, hostName: u.name, laps: FIXED_ROOM.laps, hasCourse: false, seqLen: 0, status: 'lobby', created } });
+    return meta;
+  }
+  /** 방장이 자리에 없으면 내가 방장이 된다. 성공하면 true */
+  let claiming = false;
+  async function claimHost() {
+    if (claiming) return false; claiming = true;
+    try {
+      const u = me(), players = (await get(ref(db, `rooms/${FX}/players`))).val() || {};
+      const present = new Set(Object.values(players).map(p => p.uid));
+      const r = await runTransaction(ref(db, `rooms/${FX}/meta/hostUid`), cur => (cur && cur !== u.uid && present.has(cur)) ? undefined : u.uid);
+      if (!r.committed || r.snapshot.val() !== u.uid) return false;
+      if (roles.get(FX) !== 'spectator') roles.set(FX, 'host');
+      await update(ref(db), { [`roomList/${FX}/hostUid`]: u.uid, [`roomList/${FX}/hostName`]: u.name }).catch(e => console.warn('[fixed] 목록 갱신 실패', e));
+      return true;
+    } catch (e) { console.warn('[fixed] 방장 승계 실패', e); return false; }
+    finally { claiming = false; }
+  }
+
   const api = {
     now: srvNow,
 
     /* ---- 방 목록: 요약 노드만, 최근 30개만 구독 ---- */
     subscribeRoomList(cb) {
-      return onValue(query(ref(db, 'roomList'), orderByChild('created'), limitToLast(30)), snap => {
-        const rows = [], t = srvNow();
-        snap.forEach(c => {
-          const r = c.val(); if (!r || t - (r.created || 0) > STALE_MS) return;
-          rows.push({ code: r.code, title: r.title || '', night: !!r.night, hostName: r.hostName || '?', laps: r.laps, hasCourse: !!r.hasCourse, seqLen: r.seqLen || 0, courseName: '', players: Object.keys(r.p || {}).length, max: MAX, status: r.status, created: r.created || 0 });
-        });
+      const row = r => ({ code: r.code, title: r.title || '', fixed: !!r.fixed, night: !!r.night, hostName: r.hostName || '?', laps: r.laps, hasCourse: !!r.hasCourse, seqLen: r.seqLen || 0, courseName: '', players: Object.keys(r.p || {}).length, max: MAX, status: r.status, created: r.created || 0 });
+      let rows = [], fixed = null;
+      const emit = () => cb(fixed ? [row(fixed), ...rows] : rows.slice());
+      const off1 = onValue(query(ref(db, 'roomList'), orderByChild('created'), limitToLast(30)), snap => {
+        const t = srvNow(); rows = [];
+        snap.forEach(c => { const r = c.val(); if (!r || c.key === FX || t - (r.created || 0) > STALE_MS) return; rows.push(row(r)); });
         rows.sort((a, b) => b.created - a.created);
-        cb(rows);
+        emit();
       });
+      const off2 = onValue(L(FX), s => { fixed = s.val(); emit(); });         // 고정 방은 오래돼도 항상 보인다
+      return () => { off1(); off2(); };
     },
 
     async createRoom({ title, laps, night, motor, tire, kit }) {
@@ -155,6 +186,15 @@ async function buildRooms(app, dummy, { loadUser, LANE_ORDER }) {
 
     async joinRoom(code, { motor, tire, kit }) {
       code = String(code).toUpperCase(); const u = me();
+      const fixed = code === FX;
+      if (fixed) {
+        const m = await ensureFixed();
+        if (m.status !== 'lobby') {           // 모두 나간 채로 '시작' 상태에 멈춰 있으면 대기 상태로 되돌린다
+          const ps = (await get(ref(db, `rooms/${FX}/players`))).val();
+          if (ps && Object.keys(ps).length) throw new Error('지금 레이스 중이에요. 잠시 후 다시 들어와 주세요.');
+          if (await claimHost()) await update(ref(db), { [`rooms/${FX}/meta/status`]: 'lobby', [`rooms/${FX}/meta/startAt`]: 0, [`roomList/${FX}/status`]: 'lobby' });
+        }
+      }
       const ms = (await get(ref(db, `rooms/${code}/meta`))).val();
       if (!ms) throw new Error('사라진 방이에요.');
       if (ms.status !== 'lobby') throw new Error('이미 시작된 방이에요.');
@@ -166,6 +206,7 @@ async function buildRooms(app, dummy, { loadUser, LANE_ORDER }) {
       const od1 = onDisconnect(ref(db, `rooms/${code}/players/${lane}`)); od1.remove(); hold(code, od1);
       const od2 = onDisconnect(ref(db, `roomList/${code}/p/${u.uid}`)); od2.remove(); hold(code, od2);
       await set(ref(db, `roomList/${code}/p/${u.uid}`), true).catch(() => { });
+      if (fixed) await claimHost();               // 방장이 자리에 없으면 내가 방장
       return fetchSnap(code);
     },
 
@@ -187,7 +228,19 @@ async function buildRooms(app, dummy, { loadUser, LANE_ORDER }) {
         got.add(key);
         if (got.size < 4 || closed) return;
         if (!v.meta) { closed = true; cb({ code, status: 'closed' }); return; }
+        if (code === FX) syncFixedHost(v);
         cb(buildSnap(code, v));
+      };
+      // 고정 방: 방장이 나갔으면 남은 사람 중 레인 순서가 빠른 사람부터 이어받는다 (동시에 시도해도 트랜잭션이 하나만 통과)
+      let tmr = 0;
+      const syncFixedHost = val => {
+        const u = me(), ps = Object.entries(val.players || {}).sort((a, b) => LANE_ORDER.indexOf(+a[0]) - LANE_ORDER.indexOf(+b[0])).map(([, p]) => p.uid);
+        const host = val.meta.hostUid, role = roles.get(code);
+        if (role === 'spectator' || !ps.includes(u.uid)) return;
+        if (host === u.uid) { roles.set(code, 'host'); return; }
+        if (role === 'host') roles.set(code, 'guest');
+        if (ps.includes(host)) return;
+        clearTimeout(tmr); tmr = setTimeout(() => claimHost(), 300 + ps.indexOf(u.uid) * 900);
       };
       const offs = [
         onValue(ref(db, `rooms/${code}/meta`), s => { v.meta = s.val(); emit('meta'); }),
@@ -195,7 +248,7 @@ async function buildRooms(app, dummy, { loadUser, LANE_ORDER }) {
         onValue(ref(db, `rooms/${code}/spectators`), s => { v.spectators = s.val(); emit('spectators'); }),
         onValue(ref(db, `rooms/${code}/seq`), s => { v.seq = s.val(); emit('seq'); }),
       ];
-      return () => offs.forEach(f => f());
+      return () => { clearTimeout(tmr); offs.forEach(f => f()); };
     },
 
     /* ---- 방장 전용 쓰기 ---- */
@@ -241,9 +294,9 @@ async function buildRooms(app, dummy, { loadUser, LANE_ORDER }) {
     async leaveRoom(code) {
       const role = roles.get(code), u = me();
       try {
-        if (role === 'host') await Promise.all([remove(R(code)), remove(L(code))]);
+        if (role === 'host' && code !== FX) await Promise.all([remove(R(code)), remove(L(code))]);
         else if (role === 'spectator') await remove(ref(db, `rooms/${code}/spectators/${u.uid}`));
-        else if (role === 'guest') {
+        else if (role === 'guest' || role === 'host') {      // 고정 방의 방장은 자리만 비운다 (남은 사람이 방장을 이어받음)
           const lane = myLane.get(code);
           await Promise.all([lane != null ? remove(ref(db, `rooms/${code}/players/${lane}`)) : null, remove(ref(db, `roomList/${code}/p/${u.uid}`))]);
         }

@@ -5,7 +5,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { PIECES, PRESETS, PRESET_LEVEL, ROAD_HALF, K, FLIP, buildTrack, sampleAt } from './track.js';
 import { mod8, rot, pinfo, endPos, worldPts, collides, neighborsOf, openConns, allConns, match, poseForAttach, traverse, newId, setIdBase, layoutFromSeq } from './layout.js';
 import { TIME_SCALE, CRASH_TIME, MOTORS, TIRES, makeCar, stepCar, vcrit, launchSpeed, laneLatAt, laneLiftAt, laneGroundE, laneBridgeE, laneBridgeLift, LANE_LAT, BRIDGE_H } from './sim.js';
-import { backend, courseKey, rng, setSeedCourses } from './backend.js';
+import { backend, courseKey, rng, setSeedCourses, FIXED_ROOM } from './backend.js';
 import { KIT_PRESETS, DEFAULT_KIT, partOf, normalizeKit, encodeKit, deriveSpec, lockKit, unlocksAt, nextUnlock, GARAGE_UNLOCK } from './parts.js';
 import { createGarage } from './garage.js';
 
@@ -537,7 +537,8 @@ const E = { tool: 'select', armed: null, rot: 0, flipAttach: false, ghost: null,
 let mode = 'build';
 /** 화면 상태: home(방 목록) | room(방). role: host(트랙 커스텀 가능) | guest(보기 전용) */
 const V = { screen: 'home', role: null, code: null, spin: false };
-const canEdit = () => mode === 'build' && V.screen === 'room' && V.role === 'host';
+const isFixedRoom = () => V.screen === 'room' && V.code === FIXED_ROOM.code;        // 고정 방: 코스(윈터컵) 편집 불가
+const canEdit = () => mode === 'build' && V.screen === 'room' && V.role === 'host' && !isFixedRoom();
 const cloneP = p => ({ id: p.id, type: p.type, x: p.x, z: p.z, k: p.k });
 
 function loadInitial() {
@@ -1480,22 +1481,22 @@ const mqMobile = matchMedia('(max-width:820px), (max-height:560px)');
   new ResizeObserver(() => syncView()).observe($('left'));
 }
 function applyScreen() {
-  const home = V.screen === 'home', host = V.role === 'host';
+  const home = V.screen === 'home', host = V.role === 'host', editHost = host && !isFixedRoom();
   $('home').classList.toggle('hide', !home);
   $('editor').classList.toggle('hide', home);
   $('title').classList.toggle('hide', home);
-  $('left').classList.toggle('hide', !host);
+  $('left').classList.toggle('hide', !editHost);
   $('startBox').classList.toggle('hide', !host);
   $('waitMsg').classList.toggle('hide', host || home);
   const spec = V.role === 'spectator';
   $('myCar').classList.toggle('hide', spec);
   $('waitMsg').textContent = spec ? '방장이 시작하면 경기를 볼 수 있어요…' : '방장이 시작하길 기다리는 중…';
-  V.spin = host;                       // 방장은 코스를 만지기 시작하면 회전이 멈춘다
+  V.spin = editHost;                   // 방장은 코스를 만지기 시작하면 회전이 멈춘다
   controls.autoRotate = true; controls.autoRotateSpeed = 0.8;
   controls.mouseButtons.LEFT = canEdit() ? null : THREE.MOUSE.ROTATE;       // 방장이 아니면 왼쪽 드래그로 시점 회전
   controls.touches.ONE = canEdit() ? null : THREE.TOUCH.ROTATE;             // 터치도 마찬가지 (두 손가락: 확대/이동은 항상)
-  $('editor').classList.toggle('noleft', !host); setMobTab(host ? mobTab : 'right');
-  if (!host) { E.armed = null; E.tool = 'select'; E.selId = null; E.anchorMode = false; }
+  $('editor').classList.toggle('noleft', !editHost); setMobTab(editHost ? mobTab : 'right');
+  if (!editHost) { E.armed = null; E.tool = 'select'; E.selId = null; E.anchorMode = false; }
   recompute(false);
 }
 
@@ -1510,11 +1511,13 @@ function showHome() {
 }
 function renderRoomList(rows) {
   if (V.screen !== 'home') return;
+  const fx = rows.find(r => r.code === FIXED_ROOM.code) || { code: FIXED_ROOM.code, players: 0, max: 3, status: 'lobby' };
+  rows = [{ ...fx, fixed: true, title: FIXED_ROOM.title, night: false, hasCourse: true, courseName: '2026 윈터컵 코스', seqLen: PRESETS[FIXED_ROOM.course].length }, ...rows.filter(r => r.code !== FIXED_ROOM.code)];
   $('roomList').innerHTML = rows.length ? rows.map(r => {
-    const full = r.players >= r.max, busy = r.status !== 'lobby';
+    const full = r.players >= r.max, busy = r.status !== 'lobby' && !(r.fixed && !r.players);      // 고정 방이 빈 채로 '시작' 상태면 들어가면서 되돌린다
     const joinBtn = `<button class="btn go2" data-code="${r.code}" ${full || busy ? 'disabled' : ''}>${full ? '참여불가' : busy ? '진행 중' : '참여하기'}</button>`;
     const watchBtn = full ? `<button class="btn blue" data-watch="${r.code}" ${busy ? 'disabled' : ''} title="${busy ? '진행 중인 방은 관전할 수 없어요' : ''}">👀 관전하기</button>` : '';
-    return `<div class="crow"><div><b>${esc(r.title || r.hostName + '의 방')}</b>${r.night ? ' <span class="nightTag">🌙 밤</span>' : ''}<br><span class="hint">방장 ${esc(r.hostName)} · ${r.hasCourse ? `${esc(r.courseName || '커스텀 코스')} · 부품 ${r.seqLen}개` : '코스 만드는 중…'} · ${LAPS_FIXED}랩 · ${r.players}/${r.max}명</span></div>
+    return `<div class="crow ${r.fixed ? 'fixedRoom' : ''}"><div>${r.fixed ? '<span class="pinTag">📌 상시</span> ' : ''}<b>${esc(r.title || r.hostName + '의 방')}</b>${r.night ? ' <span class="nightTag">🌙 밤</span>' : ''}<br><span class="hint">${r.fixed && !r.players ? '먼저 들어온 사람이 방장' : `방장 ${esc(r.hostName)}`} · ${r.hasCourse ? `${esc(r.courseName || '커스텀 코스')} · 부품 ${r.seqLen}개` : '코스 만드는 중…'} · ${LAPS_FIXED}랩 · ${r.players}/${r.max}명</span></div>
       <div class="row" style="margin:0;flex-wrap:nowrap">${watchBtn}${joinBtn}</div></div>`;
   }).join('') : '<div class="hint empty" style="padding:10px 0">열려 있는 방이 없어요. 방을 만들어 보세요!</div>';
   $('roomList').querySelectorAll('[data-watch]').forEach(b => b.onclick = async () => {
@@ -1554,9 +1557,13 @@ $('makeRoom').onclick = () => { bgmPlay(); showCreateRoom(); };
 /* ---- 방 ---- */
 function enterRoom(s, role) {
   if (listUnsub) { listUnsub(); listUnsub = null; }
-  statusKey = null; hideCenterPop(); mobTab = role === 'host' ? 'left' : 'right';
+  const fixed = s.code === FIXED_ROOM.code;
+  if (fixed && role !== 'spectator') role = s.hostUid === backend.userSync().uid ? 'host' : 'guest';
+  statusKey = null; hideCenterPop(); mobTab = role === 'host' && !fixed ? 'left' : 'right';
   V.screen = 'room'; V.role = role; V.code = s.code; roomSnap = s; lastStartAt = 0; pendingClose = false; lastSyncKey = undefined;
-  if (role !== 'host') {            // 방장이 만든 코스를 그대로 보여주기 위해 내 편집 중인 코스는 잠시 보관
+  if (fixed) {                      // 고정 방: 내 편집 코스는 보관하고 윈터컵 코스로
+    savedPieces = JSON.stringify(pieces); loadSeq(PRESETS[FIXED_ROOM.course], false);
+  } else if (role !== 'host') {            // 방장이 만든 코스를 그대로 보여주기 위해 내 편집 중인 코스는 잠시 보관
     savedPieces = JSON.stringify(pieces); pieces = []; E.selId = null; E.armed = null; E.anchorMode = false; pushHist();
   } else { E.tool = 'select'; E.armed = null; E.anchorMode = false; }
   $('rTitle').textContent = roomTitleOf(s); $('startErr').textContent = ''; setNight(s.night);
@@ -1572,7 +1579,16 @@ function onLoopChanged() {
 function onRoomSnap(s) {
   if (s.status === 'closed') { if (mode === 'build') { toast('방장이 방을 닫았어요'); showHome(); } else pendingClose = true; return; }
   roomSnap = s; setNight(s.night);
-  if (V.role !== 'host') {           // 방장 화면과 똑같이: 방장의 코스를 불러와서 보여준다
+  if (isFixedRoom() && V.role !== 'spectator') {      // 고정 방: 방장이 바뀌면 시작 버튼을 넘겨받는다
+    const want = s.hostUid === backend.userSync().uid ? 'host' : 'guest';
+    if (want !== V.role) {
+      V.role = want;
+      if (mode === 'build') { resetStartChoice(); applyScreen(); }
+      if (want === 'host') { toast('👑 방장이 되었어요! 시작 버튼으로 레이스를 시작할 수 있어요'); lastSyncKey = undefined; onLoopChanged(); }
+    }
+  }
+  if (isFixedRoom()) { /* 코스는 항상 윈터컵: 방장의 코스를 따라 바꾸지 않는다 */ }
+  else if (V.role !== 'host') {           // 방장 화면과 똑같이: 방장의 코스를 불러와서 보여준다
     if (s.seq && (!loop.valid || courseKey(loop.seq) !== courseKey(s.seq))) loadSeq(s.seq, false);
     else if (!s.seq && pieces.length) { pieces = []; recompute(false); }
   }

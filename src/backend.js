@@ -82,6 +82,8 @@ function allCourses() {
 const rooms = new Map();         // code → { room, subs:Set, timers:[], fake }
 const listSubs = new Set();
 const LANE_ORDER = [1, 0, 2];    // 입장 순서대로 가운데 → 왼쪽 → 오른쪽
+/** 항상 열려 있는 고정 방: 처음 들어온 사람이 방장, 방장이 나가면 남은 사람이 이어받는다. 코스는 윈터컵 고정 */
+export const FIXED_ROOM = { code: 'FREEWC', title: '[자유방] 2026 윈터컵 연습 레이스', course: '2026년 윈터컵 코스', laps: 3 };
 const snap = r => { const o = clone(r); o.serverNow = Date.now(); return o; };
 const roomRow = h => { const r = h.room, host = r.players.find(p => p.uid === r.hostUid); return { code: r.code, title: r.title || '', night: !!r.night, hostName: host ? host.name : '?', laps: r.laps, hasCourse: !!r.seq, seqLen: r.seq ? r.seq.length : 0, courseName: r.courseName || '', players: r.players.length, max: 3, status: r.status }; };
 const listSync = () => { seedFakeRooms(); return [...rooms.values()].map(roomRow); };
@@ -109,6 +111,7 @@ let fakeSeeded = false;
 function seedFakeRooms() {
   if (fakeSeeded) return; fakeSeeded = true;
   const spec = [{ code: 'K7M2', n: 1, laps: 3, title: '초보 환영! 오벌에서 한판' }, { code: 'R4TX', n: 2, laps: 2, title: '점프 서킷 같이 달려요' }, { code: 'B9QA', n: 3, laps: 1, title: '슬로프 챌린지 (가득 참)' }];
+  rooms.set(FIXED_ROOM.code, { subs: new Set(), timers: [], fake: false, fixed: true, armed: false, room: { code: FIXED_ROOM.code, title: FIXED_ROOM.title, fixed: true, hostUid: null, seq: null, laps: FIXED_ROOM.laps, status: 'lobby', startAt: 0, seed: 0, fillAI: false, players: [], spectators: [] } });
   spec.forEach((sp, i) => {
     const c = seedCourses[i % Math.max(1, seedCourses.length)]; if (!c) return;
     const h = { subs: new Set(), timers: [], fake: true, armed: false, room: { code: sp.code, title: sp.title, hostUid: 'bothost' + i, seq: c.seq, courseName: c.name, laps: sp.laps, status: 'lobby', startAt: 0, seed: 0, fillAI: false, players: [], spectators: [] } };
@@ -174,6 +177,7 @@ const dummy = {
     if (!h) throw new Error('사라진 방이에요.');
     if (h.room.status !== 'lobby') throw new Error('이미 시작된 방이에요.');
     if (!h.room.players.some(p => p.uid === u.uid)) { if (!addPlayer(h, { uid: u.uid, name: u.name, motor, tire, kit, lane: 0, bot: false })) throw new Error('방이 가득 찼어요 (최대 3명).'); }
+    if (h.fixed && !h.room.players.some(p => p.uid === h.room.hostUid)) { h.room.hostUid = u.uid; notify(h); }    // 고정 방: 방장이 없으면 내가 방장
     armFakeStart(h);
     return wait(snap(h.room), 200);
   },
@@ -215,10 +219,14 @@ const dummy = {
   },
   leaveRoom(code) {
     const h = rooms.get(code), u = loadUser(); if (!h) return wait(true, 30);
-    if (h.room.hostUid === u.uid) { h.timers.forEach(clearTimeout); h.room.status = 'closed'; notify(h); rooms.delete(code); notifyList(); }
+    if (h.room.hostUid === u.uid && !h.fixed) { h.timers.forEach(clearTimeout); h.room.status = 'closed'; notify(h); rooms.delete(code); notifyList(); }
     else {
       h.room.spectators = h.room.spectators.filter(p => p.uid !== u.uid);
       h.room.players = h.room.players.filter(p => p.uid !== u.uid); h.room.players.forEach((p, i) => { p.lane = LANE_ORDER[i]; });
+      if (h.fixed) {             // 고정 방: 방은 남기고 방장만 넘긴다
+        if (!h.room.players.some(p => p.uid === h.room.hostUid)) h.room.hostUid = h.room.players.length ? h.room.players[0].uid : null;
+        if (!h.room.players.length) { h.room.status = 'lobby'; h.room.startAt = 0; }
+      }
       if (h.fake && !h.room.players.some(p => !p.bot) && !h.room.spectators.length) { h.timers.forEach(clearTimeout); h.timers = []; h.armed = false; if (h.room.status !== 'lobby') { h.room.status = 'lobby'; h.room.startAt = 0; } }
       notify(h);
     }
@@ -234,7 +242,7 @@ async function pick() {
     const { firebaseConfig } = await import('./firebase-config.js');
     if (!firebaseConfig || !firebaseConfig.apiKey || !firebaseConfig.projectId) return dummy;
     const { createFirebaseBackend } = await import('./backend-firebase.js');
-    return await createFirebaseBackend(dummy, firebaseConfig, { setUserUid, loadUser, LANE_ORDER });
+    return await createFirebaseBackend(dummy, firebaseConfig, { setUserUid, loadUser, LANE_ORDER, FIXED_ROOM });
   } catch (e) { console.warn('[backend] Firebase 사용 불가 → 더미로 동작:', e); return dummy; }
 }
 export const backend = await pick();
