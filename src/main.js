@@ -763,11 +763,17 @@ function arm(type) {
   } else E.anchorMode = false;
   recompute(false);
 }
-const presetNames = Object.keys(PRESETS);
+/** 화면에 보이는 추천 코스 순서: 시즌 코스(2026년 윈터컵)를 맨 앞에. PRESETS 자체 순서는 더미 방 등에서 쓰므로 그대로 둔다 */
+const FEATURED = ['2026년 윈터컵 코스'];
+const presetNames = [...FEATURED.filter(n => PRESETS[n]), ...Object.keys(PRESETS).filter(n => !FEATURED.includes(n))];
+const nFeat = FEATURED.filter(n => PRESETS[n]).length;
 presetNames.forEach((name, i) => {
   const b = document.createElement('button'); b.className = 'btn preset'; b.textContent = name;
-  const rest = presetNames.length % 3, left = presetNames.length - i;           // 마지막 줄이 3칸을 못 채우면 남은 칸만큼 넓혀서 빈 곳이 없게
-  if (rest && left <= rest) b.style.gridColumn = left === 1 ? `span ${3 - rest + 1}` : '';
+  if (i < nFeat) b.style.gridColumn = 'span 3';                                 // 시즌 코스: 첫 줄 전체 폭 (이름이 길어도 잘리지 않게)
+  else {
+    const n = presetNames.length - nFeat, rest = n % 3, left = presetNames.length - i;   // 마지막 줄이 3칸을 못 채우면 남은 칸만큼 넓혀서 빈 곳이 없게
+    if (rest && left <= rest) b.style.gridColumn = left === 1 ? `span ${3 - rest + 1}` : '';
+  }
   b.onclick = () => { pieces = layoutFromSeq(PRESETS[name]); E.selId = null; E.armed = null; E.anchorMode = false; commit(); fitCamera(false); }; $('presets').appendChild(b);
 });
 $('tSelect').onclick = () => { E.tool = 'select'; E.armed = null; E.anchorMode = false; recompute(false); };
@@ -1247,7 +1253,7 @@ const DUMMY_NOTE = backend.rankKind === 'firebase' ? '' : '<div class="hint">※
  * 서버 읽기를 아끼려고 탭을 누를 때만 불러오고, 창이 열려 있는 동안은 결과를 기억한다. */
 const rankTr = (x, rank) => `<tr class="${x.me ? 'me' : ''}"><td>${rank <= 3 ? ['🥇', '🥈', '🥉'][rank - 1] : rank}</td><td>${esc(x.name)}${x.me ? ' <b>(나)</b>' : ''}</td><td>${fmt(x.time)}</td><td>${fmt(x.best)}</td><td class="rk-set">${mName(x.motor)} / ${tName(x.tire)}</td></tr>`;
 function rankCourses() {
-  const list = Object.keys(PRESETS).map(name => ({ id: 'p:' + name, name, seq: PRESETS[name], level: PRESET_LEVEL[name] || 0 }));
+  const list = presetNames.map(name => ({ id: 'p:' + name, name, seq: PRESETS[name], level: PRESET_LEVEL[name] || 0 }));
   if (loop.valid && !list.some(c => courseKey(c.seq) === courseKey(loop.seq))) list.push({ id: 'cur', name: V.screen === 'room' ? '이 방의 코스' : '내가 만든 코스', seq: loop.seq.slice(), level: 0 });
   return list.map(c => { const tr = buildTrack(c.seq); return { ...c, key: boardKey(c.seq), hint: boardHint(tr), len: tr.Ltot }; });
 }
