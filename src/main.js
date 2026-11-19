@@ -38,18 +38,22 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0xcfe6ff, 260, 1000);
-{
+/** 세로 그라데이션 하늘 (위 → 지평선) */
+function skyTex(stops) {
   const c = document.createElement('canvas'); c.width = 4; c.height = 256;
   const g = c.getContext('2d'), gr = g.createLinearGradient(0, 0, 0, 256);
-  gr.addColorStop(0, '#3f86e8'); gr.addColorStop(0.6, '#9cc9f5'); gr.addColorStop(1, '#dcecff');
+  stops.forEach(([o, col]) => gr.addColorStop(o, col));
   g.fillStyle = gr; g.fillRect(0, 0, 4, 256);
-  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; scene.background = t;
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
 }
+const SKY_DAY = skyTex([[0, '#3f86e8'], [0.6, '#9cc9f5'], [1, '#dcecff']]);
+const SKY_NIGHT = skyTex([[0, '#01030b'], [0.45, '#071030'], [0.8, '#13224d'], [1, '#22346a']]);
+scene.background = SKY_DAY;
 scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
 scene.environmentIntensity = 0.55;
 const camera = new THREE.PerspectiveCamera(55, 1, 0.5, 2500);
 camera.position.set(80, 140, 120);
-scene.add(new THREE.HemisphereLight(0xdff0ff, 0x4a7a3a, 0.7));
+const hemi = new THREE.HemisphereLight(0xdff0ff, 0x4a7a3a, 0.7); scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xfff2dd, 2.4);
 sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048);
 const SH = 70; Object.assign(sun.shadow.camera, { left: -SH, right: SH, top: SH, bottom: -SH, near: 1, far: 300 });
@@ -102,6 +106,70 @@ const grassTex = canvasTex(256, 256, (g, w, h) => {
 grassTex.repeat.set(200, 200);
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(4000, 4000), new THREE.MeshStandardMaterial({ map: grassTex, roughness: 1 }));
 ground.rotation.x = -Math.PI / 2; ground.position.y = -0.02; ground.receiveShadow = true; scene.add(ground);
+
+/* ---- 낮 / 밤 (방을 만들 때 방장이 고른다) ----
+ * 밤: 남색 하늘 + 반짝이는 별 + 달, 해 대신 푸른 달빛, 미니카는 헤드라이트를 켠다. */
+let night = false;
+const stars = (() => {
+  const N = 1600, pos = new Float32Array(N * 3), ph = new Float32Array(N), sz = new Float32Array(N), tint = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    const y = 0.03 + Math.pow(Math.random(), 0.8) * 0.97, a = Math.random() * Math.PI * 2, r = Math.sqrt(1 - y * y);   // 지평선 위 반구
+    pos.set([Math.cos(a) * r, y, Math.sin(a) * r], i * 3);
+    ph[i] = Math.random() * 100; sz[i] = 1.3 + Math.pow(Math.random(), 4) * 3.4; tint[i] = Math.random();
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setAttribute('aPh', new THREE.BufferAttribute(ph, 1));
+  geo.setAttribute('aSz', new THREE.BufferAttribute(sz, 1)); geo.setAttribute('aTint', new THREE.BufferAttribute(tint, 1));
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { uT: { value: 0 }, uPx: { value: renderer.getPixelRatio() } },
+    vertexShader: `attribute float aPh; attribute float aSz; attribute float aTint; uniform float uT; uniform float uPx;
+      varying float vA; varying vec3 vC;
+      void main() {
+        vec4 p = modelViewMatrix * vec4(position * 1500.0, 1.0); gl_Position = projectionMatrix * p;
+        float tw = 0.5 + 0.5 * sin(uT * (1.3 + fract(aPh * 0.37) * 3.2) + aPh);      // 별마다 다른 속도로 반짝
+        tw = mix(tw, tw * tw * tw, step(0.82, fract(aPh * 0.73)));                  // 일부는 크게 깜빡
+        vA = (0.35 + 0.65 * tw) * smoothstep(0.02, 0.18, position.y);               // 지평선 근처는 흐리게
+        vC = mix(vec3(0.75, 0.85, 1.0), vec3(1.0, 0.93, 0.78), aTint);
+        gl_PointSize = aSz * uPx * (0.8 + 0.35 * tw);
+      }`,
+    fragmentShader: `varying float vA; varying vec3 vC;
+      void main() { vec2 d = gl_PointCoord - 0.5; float r = length(d); float a = smoothstep(0.5, 0.0, r); a *= a; gl_FragColor = vec4(vC, a * vA); }`,
+    transparent: true, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending, fog: false,
+  });
+  const pts = new THREE.Points(geo, mat); pts.frustumCulled = false; pts.renderOrder = -10; pts.visible = false; scene.add(pts);
+  return pts;
+})();
+const MOON_DIR = new THREE.Vector3(-0.55, 0.42, -0.72).normalize();
+const moon = new THREE.Sprite(new THREE.SpriteMaterial({
+  map: canvasTex(256, 256, (g, w, h) => {
+    const gl = g.createRadialGradient(w / 2, h / 2, 20, w / 2, h / 2, w / 2);
+    gl.addColorStop(0, 'rgba(210,225,255,.55)'); gl.addColorStop(0.35, 'rgba(150,175,235,.18)'); gl.addColorStop(1, 'rgba(120,150,220,0)');
+    g.fillStyle = gl; g.fillRect(0, 0, w, h);
+    const d = g.createRadialGradient(w / 2 - 8, h / 2 - 8, 4, w / 2, h / 2, 34);
+    d.addColorStop(0, '#fffdf2'); d.addColorStop(1, '#e6e9f2'); g.fillStyle = d;
+    g.beginPath(); g.arc(w / 2, h / 2, 34, 0, Math.PI * 2); g.fill();
+    g.fillStyle = 'rgba(160,170,195,.35)';                                    // 크레이터
+    for (const [x, y, r] of [[-10, -6, 7], [9, 8, 5], [12, -12, 4], [-4, 14, 4]]) { g.beginPath(); g.arc(w / 2 + x, h / 2 + y, r, 0, Math.PI * 2); g.fill(); }
+  }, false), transparent: true, depthWrite: false, depthTest: false, fog: false,
+}));
+moon.scale.set(260, 260, 1); moon.renderOrder = -9; moon.visible = false; scene.add(moon);
+/** 별·달은 카메라를 따라다녀서 무한히 먼 하늘처럼 보인다 */
+function skyTick(dt) {
+  if (!night) return;
+  stars.position.copy(camera.position); stars.material.uniforms.uT.value += dt;
+  moon.position.copy(camera.position).addScaledVector(MOON_DIR, 1400);
+}
+function setNight(on) {
+  on = !!on; if (night === on) return; night = on;
+  scene.background = on ? SKY_NIGHT : SKY_DAY;
+  scene.fog.color.setHex(on ? 0x101d42 : 0xcfe6ff);
+  hemi.color.setHex(on ? 0x5b70b8 : 0xdff0ff); hemi.groundColor.setHex(on ? 0x0b1020 : 0x4a7a3a); hemi.intensity = on ? 0.42 : 0.7;
+  sun.color.setHex(on ? 0x8aa4ff : 0xfff2dd); sun.intensity = on ? 0.5 : 2.4;          // 밤에는 해 대신 달빛
+  scene.environmentIntensity = on ? 0.12 : 0.55; renderer.toneMappingExposure = on ? 0.6 : 1;
+  stars.visible = moon.visible = on;
+  document.body.classList.toggle('night', on);
+  vis.forEach(v => v.setLights(on));
+}
 
 const roadMat = new THREE.MeshStandardMaterial({ map: roadTex, vertexColors: true, roughness: 0.55, side: THREE.DoubleSide });
 const plasticMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.42, side: THREE.DoubleSide });     // 벽 · 칸막이 · 옆면
@@ -875,9 +943,50 @@ class CarVis {
     const ring = new THREE.Mesh(new THREE.RingGeometry(3.2, 4.2, 28), new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true, opacity: 0.95 }));
     for (const o of [disc, ring]) { o.rotation.x = -Math.PI / 2; o.renderOrder = 6; this.marker.add(o); }
     this.marker.visible = false; scene.add(this.marker);
+    // 차체 크기 (헤드라이트 위치용): 그룹이 아직 원점·무회전이라 로컬 좌표 그대로
+    this.box = new THREE.Box3().setFromObject(m);
+    this.lights = null; this.setLights(night);
+  }
+  /** 밤: 헤드라이트(렌즈 + 빛 번짐 + 노면을 비추는 빛 + 실제 스포트라이트) · 빨간 후미등 */
+  setLights(on) {
+    if (!on) { if (this.lights) this.lights.visible = false; return; }
+    if (!this.lights) {
+      const b = this.box, L = new THREE.Group(), fz = b.max.z - 0.15, hw = (b.max.x - b.min.x) / 2, ly = b.min.y + (b.max.y - b.min.y) * 0.42;
+      for (const sx of [-1, 1]) {
+        const lens = new THREE.Mesh(LAMP_GEO, LAMP_MAT); lens.position.set(sx * hw * 0.5, ly, fz); L.add(lens);
+        const glow = new THREE.Sprite(GLOW_MAT); glow.position.set(sx * hw * 0.5, ly, fz + 0.3); glow.scale.set(3.2, 3.2, 1); L.add(glow);
+        const tail = new THREE.Mesh(LAMP_GEO, TAIL_MAT); tail.position.set(sx * hw * 0.32, ly + 0.25, b.min.z + 0.6); tail.scale.setScalar(0.45); L.add(tail);
+        const tg = new THREE.Sprite(TAILGLOW_MAT); tg.position.set(sx * hw * 0.32, ly + 0.25, b.min.z + 0.4); tg.scale.set(1.1, 1.1, 1); L.add(tg);
+      }
+      const beam = new THREE.Mesh(BEAM_GEO, BEAM_MAT); beam.rotation.x = -Math.PI / 2; beam.position.set(0, 0.08, fz + BEAM_LEN / 2 - 0.5); beam.renderOrder = 3; L.add(beam);
+      const spot = new THREE.SpotLight(0xffedc4, 160, 70, 0.55, 0.65, 1.3); spot.position.set(0, ly + 0.6, fz);
+      spot.target.position.set(0, 0, fz + 22); L.add(spot, spot.target);
+      this.lights = L; this.group.add(L);
+    }
+    this.lights.visible = true;
   }
   dispose() { scene.remove(this.group); scene.remove(this.marker); }
 }
+/* 헤드라이트 공용 재질 */
+const LAMP_GEO = new THREE.SphereGeometry(0.3, 12, 8);
+const LAMP_MAT = new THREE.MeshBasicMaterial({ color: 0xfff7e0 });
+const TAIL_MAT = new THREE.MeshBasicMaterial({ color: 0xff2a2a });
+const glowTex = rgb => canvasTex(64, 64, (g, w, h) => { const gr = g.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2); gr.addColorStop(0, `rgba(${rgb},1)`); gr.addColorStop(0.25, `rgba(${rgb},.45)`); gr.addColorStop(1, `rgba(${rgb},0)`); g.fillStyle = gr; g.fillRect(0, 0, w, h); }, false);
+const GLOW_MAT = new THREE.SpriteMaterial({ map: glowTex('255,240,205'), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true });
+const TAILGLOW_MAT = new THREE.SpriteMaterial({ map: glowTex('255,40,30'), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.55 });
+const BEAM_LEN = 17;
+const BEAM_GEO = new THREE.PlaneGeometry(10, BEAM_LEN);
+/* 노면에 비치는 빛: 차 앞에서 시작해 부채꼴로 퍼지며 멀어질수록 흐려진다 (캔버스 위쪽 = 차 쪽) */
+const BEAM_MAT = new THREE.MeshBasicMaterial({
+  map: canvasTex(128, 256, (g, w, h) => {
+    const c = document.createElement('canvas'); c.width = w; c.height = h; const q = c.getContext('2d');
+    q.beginPath(); q.moveTo(w * 0.36, 0); q.lineTo(w * 0.64, 0); q.lineTo(w * 0.98, h); q.lineTo(w * 0.02, h); q.closePath(); q.clip();
+    const gr = q.createLinearGradient(0, 0, 0, h); gr.addColorStop(0, 'rgba(255,238,200,.75)'); gr.addColorStop(0.45, 'rgba(255,232,190,.35)'); gr.addColorStop(1, 'rgba(255,228,185,0)');
+    q.fillStyle = gr; q.fillRect(0, 0, w, h);
+    g.filter = 'blur(7px)'; g.drawImage(c, 0, 0);
+  }, false),
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3,
+});
 
 /* ---- 내 미니카 세팅 (커스텀 kit: 모터·기어·타이어·롤러·매스댐퍼·브레이크·바디) ---- */
 const _oldSetups = store.get('mini4wd.setups', null);
@@ -1394,7 +1503,7 @@ function applyScreen() {
 function showHome() {
   if (roomUnsub) { roomUnsub(); roomUnsub = null; }
   if (savedPieces) { pieces = JSON.parse(savedPieces); savedPieces = null; E.selId = null; E.armed = null; E.anchorMode = false; pushHist(); }
-  V.screen = 'home'; V.role = null; V.code = null; roomSnap = null; roomRoster = null; lastSyncKey = undefined;
+  V.screen = 'home'; V.role = null; V.code = null; roomSnap = null; roomRoster = null; lastSyncKey = undefined; setNight(false);
   applyScreen(); fitCamera(false, true);
   if (listUnsub) listUnsub();
   listUnsub = backend.subscribeRoomList(renderRoomList);
@@ -1405,7 +1514,7 @@ function renderRoomList(rows) {
     const full = r.players >= r.max, busy = r.status !== 'lobby';
     const joinBtn = `<button class="btn go2" data-code="${r.code}" ${full || busy ? 'disabled' : ''}>${full ? '참여불가' : busy ? '진행 중' : '참여하기'}</button>`;
     const watchBtn = full ? `<button class="btn blue" data-watch="${r.code}" ${busy ? 'disabled' : ''} title="${busy ? '진행 중인 방은 관전할 수 없어요' : ''}">👀 관전하기</button>` : '';
-    return `<div class="crow"><div><b>${esc(r.title || r.hostName + '의 방')}</b><br><span class="hint">방장 ${esc(r.hostName)} · ${r.hasCourse ? `${esc(r.courseName || '커스텀 코스')} · 부품 ${r.seqLen}개` : '코스 만드는 중…'} · ${LAPS_FIXED}랩 · ${r.players}/${r.max}명</span></div>
+    return `<div class="crow"><div><b>${esc(r.title || r.hostName + '의 방')}</b>${r.night ? ' <span class="nightTag">🌙 밤</span>' : ''}<br><span class="hint">방장 ${esc(r.hostName)} · ${r.hasCourse ? `${esc(r.courseName || '커스텀 코스')} · 부품 ${r.seqLen}개` : '코스 만드는 중…'} · ${LAPS_FIXED}랩 · ${r.players}/${r.max}명</span></div>
       <div class="row" style="margin:0;flex-wrap:nowrap">${watchBtn}${joinBtn}</div></div>`;
   }).join('') : '<div class="hint empty" style="padding:10px 0">열려 있는 방이 없어요. 방을 만들어 보세요!</div>';
   $('roomList').querySelectorAll('[data-watch]').forEach(b => b.onclick = async () => {
@@ -1422,14 +1531,19 @@ $('nick').onchange = async () => { const u = await backend.setName($('nick').val
 /** 방 만들기: 방 제목을 입력받는 팝업 → 확인하면 방을 만들고 입장 */
 function showCreateRoom() {
   const u = backend.userSync(), def = `${u.name}의 방`;
+  let tod = 'day';                     // 기본은 항상 낮
   openModal('방 만들기', `<div class="hint" style="margin:0 0 10px">친구들이 방 목록에서 보게 될 방 제목을 입력하세요.</div>
-    <input id="rtInput" class="rtinput" maxlength="20" placeholder="${esc(def)}" autocomplete="off">
+    <div class="rtRow"><input id="rtInput" class="rtinput" maxlength="20" placeholder="${esc(def)}" autocomplete="off">
+      <button type="button" class="todSw" id="todSw" role="switch"><span class="lb"></span><span class="tk"></span></button></div>
     <div class="row" style="margin-top:16px;flex-wrap:nowrap;gap:10px"><button class="btn green big half" id="rtOk"><span class="plus">＋</span>방 만들기</button><button class="btn big half" id="rtCancel">취소</button></div>
     <div class="hint" id="rtErr" style="color:#ff8d8d"></div>`);
   const input = $('rtInput'); input.focus();
+  const todUI = () => { const sw = $('todSw'), n = tod === 'night'; sw.classList.toggle('on', n); sw.setAttribute('aria-checked', n); sw.title = n ? '밤 레이스 (누르면 낮)' : '낮 레이스 (누르면 밤)'; sw.querySelector('.tk').textContent = n ? '☾' : '☀'; sw.querySelector('.lb').textContent = n ? '밤' : '낮'; };
+  $('todSw').onclick = () => { tod = tod === 'night' ? 'day' : 'night'; todUI(); };
+  todUI();
   const go = async () => {
     $('rtOk').disabled = true;
-    try { const s = await backend.createRoom({ title: input.value.trim() || def, laps: LAPS_FIXED, ...myPayload() }); closeModal(); enterRoom(s, 'host'); }
+    try { const s = await backend.createRoom({ title: input.value.trim() || def, laps: LAPS_FIXED, night: tod === 'night', ...myPayload() }); closeModal(); enterRoom(s, 'host'); }
     catch (e) { $('rtErr').textContent = e.message; $('rtOk').disabled = false; }
   };
   $('rtOk').onclick = go; $('rtCancel').onclick = closeModal;
@@ -1445,7 +1559,7 @@ function enterRoom(s, role) {
   if (role !== 'host') {            // 방장이 만든 코스를 그대로 보여주기 위해 내 편집 중인 코스는 잠시 보관
     savedPieces = JSON.stringify(pieces); pieces = []; E.selId = null; E.armed = null; E.anchorMode = false; pushHist();
   } else { E.tool = 'select'; E.armed = null; E.anchorMode = false; }
-  $('rTitle').textContent = roomTitleOf(s); $('startErr').textContent = '';
+  $('rTitle').textContent = roomTitleOf(s); $('startErr').textContent = ''; setNight(s.night);
   resetStartChoice(); renderMyCar(); applyScreen(); fitCamera(false);
   roomUnsub = backend.subscribeRoom(s.code, onRoomSnap);
 }
@@ -1457,7 +1571,7 @@ function onLoopChanged() {
 }
 function onRoomSnap(s) {
   if (s.status === 'closed') { if (mode === 'build') { toast('방장이 방을 닫았어요'); showHome(); } else pendingClose = true; return; }
-  roomSnap = s;
+  roomSnap = s; setNight(s.night);
   if (V.role !== 'host') {           // 방장 화면과 똑같이: 방장의 코스를 불러와서 보여준다
     if (s.seq && (!loop.valid || courseKey(loop.seq) !== courseKey(s.seq))) loadSeq(s.seq, false);
     else if (!s.seq && pieces.length) { pieces = []; recompute(false); }
@@ -1465,7 +1579,7 @@ function onRoomSnap(s) {
   if (s.status === 'starting' && s.startAt !== lastStartAt && mode === 'build') { lastStartAt = s.startAt; startFromRoom(s); return; }
   if (mode === 'build') renderRoomPanel(s);
 }
-const roomTitleOf = s => { const hp = (s.players || []).find(p => p.uid === s.hostUid); return s.title || `${hp ? hp.name : '?'}의 방`; };     // 방 목록과 같은 제목
+const roomTitleOf = s => { const hp = (s.players || []).find(p => p.uid === s.hostUid); return (s.title || `${hp ? hp.name : '?'}의 방`) + (s.night ? ' 🌙' : ''); };     // 방 목록과 같은 제목
 function renderRoomPanel(s) {
   const me = backend.userSync().uid, host = V.role === 'host';
   $('rTitle').textContent = roomTitleOf(s);
@@ -1577,7 +1691,7 @@ function frame(now) {
       engGain.gain.setTargetAtTime(muted || mode !== 'race' ? 0 : 0.03, actx.currentTime, 0.1);
     }
   }
-  updateParticles(dt);
+  updateParticles(dt); skyTick(dt);
   renderer.render(scene, camera);
 }
 

@@ -173,6 +173,17 @@
   #modal .rtinput { width:100%; border:3px solid #0d1a4a; border-radius:12px; outline:0; font:inherit; font-weight:900; font-size:18px; color:#1c2542; padding:11px 14px; user-select:text;
     background:linear-gradient(180deg,#dfe7f6,#f8faff); box-shadow:inset 0 4px 8px rgba(20,40,90,.30), 0 4px 0 #08122f; }
   #modal .rtinput::placeholder { color:#8a95b0; font-weight:700; }
+  /* 방 만들기: 제목 오른쪽 낮/밤 토글 스위치 (손잡이 안 아이콘 + 반대쪽 글자) */
+  .rtRow { display:flex; gap:8px; align-items:center; } .rtRow .rtinput { flex:1; min-width:0; }
+  .todSw { position:relative; flex:none; width:92px; height:46px; border:3px solid #0d1a4a; border-radius:23px; cursor:pointer; padding:0; font:inherit;
+    background:linear-gradient(180deg,#9fd3ff,#5fb0f5); box-shadow:inset 0 3px 6px rgba(0,0,0,.25), 0 4px 0 #08122f; transition:background .25s; }
+  .todSw .tk { position:absolute; top:3px; left:3px; width:34px; height:34px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+    font-size:20px; line-height:1; font-family:'Segoe UI Symbol','Apple Symbols',sans-serif; color:#e07a00; background:linear-gradient(180deg,#fff7c9,#ffd45a); box-shadow:0 2px 3px rgba(0,0,0,.35); transition:left .25s, background .25s, color .25s; }
+  .todSw .lb { position:absolute; top:50%; left:37px; right:0; text-align:center; transform:translateY(-50%); font-size:15px; font-weight:900; color:#0d2a55; pointer-events:none; }
+  .todSw.on { background:linear-gradient(180deg,#26366e,#0b1433); }
+  .todSw.on .tk { left:49px; color:#3c4f8f; background:linear-gradient(180deg,#f3f5ff,#c9d2ee); }
+  .todSw.on .lb { left:0; right:37px; color:#e6ebff; }
+  .nightTag { display:inline-block; margin-left:4px; padding:1px 7px; border-radius:8px; background:#16224d; color:#dfe6ff; font-size:11px; font-weight:800; vertical-align:2px; }
   #modal .rtinput:focus { background:#fff; box-shadow:inset 0 4px 8px rgba(20,40,90,.30), inset 0 0 0 3px #ffd23a, 0 4px 0 #08122f; }
   /* 닉네임 입력: 파란 태그 + 안쪽으로 파인 입력칸 */
   .nickbox { display:flex; justify-content:center; margin:14px 0 14px; }

@@ -104,7 +104,7 @@ async function buildRooms(app, dummy, { loadUser, LANE_ORDER }) {
     let seq = null; try { seq = v.seq ? JSON.parse(v.seq) : null; } catch { /* */ }
     const players = Object.entries(v.players || {}).map(([lane, p]) => ({ uid: p.uid, name: p.name, motor: p.motor, tire: p.tire, kit: typeof p.kit === 'string' ? p.kit : null, lane: +lane, bot: false }));
     const spectators = Object.keys(v.spectators || {}).map(uid => ({ uid, name: '' }));
-    return { code, title: m.title || '', hostUid: m.hostUid, seq, courseName: '', laps: m.laps, status: m.status, startAt: m.startAt || 0, seed: m.seed || 0, fillAI: !!m.fillAI, players, spectators, serverNow: srvNow() };
+    return { code, title: m.title || '', night: !!m.night, hostUid: m.hostUid, seq, courseName: '', laps: m.laps, status: m.status, startAt: m.startAt || 0, seed: m.seed || 0, fillAI: !!m.fillAI, players, spectators, serverNow: srvNow() };
   }
   async function fetchSnap(code) {
     const s = await get(R(code)), v = s.val();
@@ -129,20 +129,20 @@ async function buildRooms(app, dummy, { loadUser, LANE_ORDER }) {
         const rows = [], t = srvNow();
         snap.forEach(c => {
           const r = c.val(); if (!r || t - (r.created || 0) > STALE_MS) return;
-          rows.push({ code: r.code, title: r.title || '', hostName: r.hostName || '?', laps: r.laps, hasCourse: !!r.hasCourse, seqLen: r.seqLen || 0, courseName: '', players: Object.keys(r.p || {}).length, max: MAX, status: r.status, created: r.created || 0 });
+          rows.push({ code: r.code, title: r.title || '', night: !!r.night, hostName: r.hostName || '?', laps: r.laps, hasCourse: !!r.hasCourse, seqLen: r.seqLen || 0, courseName: '', players: Object.keys(r.p || {}).length, max: MAX, status: r.status, created: r.created || 0 });
         });
         rows.sort((a, b) => b.created - a.created);
         cb(rows);
       });
     },
 
-    async createRoom({ title, laps, motor, tire, kit }) {
+    async createRoom({ title, laps, night, motor, tire, kit }) {
       const u = me(); let code, tries = 0;
       do { code = makeCode(); if (++tries > 20) throw new Error('방 코드를 만들지 못했어요. 다시 시도해 주세요.'); } while ((await get(ref(db, `rooms/${code}/meta`))).exists());
       const created = srvNow(), t = (String(title || '').trim().slice(0, 20)) || (u.name + '의 방');
-      const meta = { title: t, hostUid: u.uid, laps, status: 'lobby', startAt: 0, seed: 0, fillAI: false, created };
+      const meta = { title: t, night: !!night, hostUid: u.uid, laps, status: 'lobby', startAt: 0, seed: 0, fillAI: false, created };
       // 1단계: 방 + 목록 항목 (규칙상 방이 먼저 있어야 자리를 잡을 수 있음)
-      await update(ref(db), { [`rooms/${code}/meta`]: meta, [`roomList/${code}`]: { code, title: t, hostUid: u.uid, hostName: u.name, laps, hasCourse: false, seqLen: 0, status: 'lobby', created } });
+      await update(ref(db), { [`rooms/${code}/meta`]: meta, [`roomList/${code}`]: { code, title: t, night: !!night, hostUid: u.uid, hostName: u.name, laps, hasCourse: false, seqLen: 0, status: 'lobby', created } });
       // 2단계: 방장은 가운데 레인(1)
       const lane = LANE_ORDER[0];
       const slot = { uid: u.uid, name: u.name, motor, tire, kit: kit || null };
@@ -150,7 +150,7 @@ async function buildRooms(app, dummy, { loadUser, LANE_ORDER }) {
       roles.set(code, 'host'); myLane.set(code, lane);
       const od1 = onDisconnect(R(code)); od1.remove(); hold(code, od1);       // 방장이 끊기면 방 삭제
       const od2 = onDisconnect(L(code)); od2.remove(); hold(code, od2);       // 목록에서도 삭제
-      return { code, title: t, hostUid: u.uid, seq: null, courseName: '', laps, status: 'lobby', startAt: 0, seed: 0, fillAI: false, players: [{ ...slot, lane, bot: false }], spectators: [], serverNow: srvNow() };
+      return { code, title: t, night: !!night, hostUid: u.uid, seq: null, courseName: '', laps, status: 'lobby', startAt: 0, seed: 0, fillAI: false, players: [{ ...slot, lane, bot: false }], spectators: [], serverNow: srvNow() };
     },
 
     async joinRoom(code, { motor, tire, kit }) {

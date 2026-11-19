@@ -83,7 +83,7 @@ const rooms = new Map();         // code → { room, subs:Set, timers:[], fake }
 const listSubs = new Set();
 const LANE_ORDER = [1, 0, 2];    // 입장 순서대로 가운데 → 왼쪽 → 오른쪽
 const snap = r => { const o = clone(r); o.serverNow = Date.now(); return o; };
-const roomRow = h => { const r = h.room, host = r.players.find(p => p.uid === r.hostUid); return { code: r.code, title: r.title || '', hostName: host ? host.name : '?', laps: r.laps, hasCourse: !!r.seq, seqLen: r.seq ? r.seq.length : 0, courseName: r.courseName || '', players: r.players.length, max: 3, status: r.status }; };
+const roomRow = h => { const r = h.room, host = r.players.find(p => p.uid === r.hostUid); return { code: r.code, title: r.title || '', night: !!r.night, hostName: host ? host.name : '?', laps: r.laps, hasCourse: !!r.seq, seqLen: r.seq ? r.seq.length : 0, courseName: r.courseName || '', players: r.players.length, max: 3, status: r.status }; };
 const listSync = () => { seedFakeRooms(); return [...rooms.values()].map(roomRow); };
 const notifyList = () => { if (!listSubs.size) return; const l = listSync(); listSubs.forEach(cb => cb(l)); };
 const notify = h => { const s2 = snap(h.room); h.subs.forEach(cb => cb(s2)); notifyList(); };
@@ -160,9 +160,9 @@ const dummy = {
   subscribeRoomList(cb) { listSubs.add(cb); setTimeout(() => listSubs.has(cb) && cb(listSync()), 120); return () => listSubs.delete(cb); },
 
   /* ---- 방 ---- */
-  async createRoom({ title, laps, motor, tire, kit }) {
+  async createRoom({ title, laps, night, motor, tire, kit }) {
     const u = loadUser(); let code; do { code = makeCode(); } while (rooms.has(code));
-    const h = { subs: new Set(), timers: [], fake: false, armed: false, room: { code, title: (String(title || '').trim().slice(0, 20)) || (u.name + '의 방'), hostUid: u.uid, seq: null, laps, status: 'lobby', startAt: 0, seed: 0, fillAI: false, players: [], spectators: [] } };
+    const h = { subs: new Set(), timers: [], fake: false, armed: false, room: { code, title: (String(title || '').trim().slice(0, 20)) || (u.name + '의 방'), night: !!night, hostUid: u.uid, seq: null, laps, status: 'lobby', startAt: 0, seed: 0, fillAI: false, players: [], spectators: [] } };
     rooms.set(code, h); addPlayer(h, { uid: u.uid, name: u.name, motor, tire, kit, lane: 0, bot: false });
     // 더미: 방장이 코스를 만드는 동안 가짜 참여자가 한참 뒤에 한 명씩 들어온다 (그 전에 시작하면 혼자하기/AI와하기)
     [20000, 45000].forEach(ms => h.timers.push(setTimeout(() => { if (h.room.status === 'lobby' && rooms.get(code) === h) addPlayer(h, botPlayer(h.room)); }, ms)));
